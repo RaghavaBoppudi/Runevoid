@@ -1,0 +1,12 @@
+Subject: {title} – {sender_name}
+---
+{greeting}
+
+I am interested in the {title} position{client_part}. {experience_line} {background_line}
+
+Currently on an H1B visa, open to C2C.
+
+{closing}
+
+Best regards,
+{signature_block}

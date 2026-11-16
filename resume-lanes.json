@@ -1,0 +1,68 @@
+{
+  "_help": "How RUNE picks a resume (edits apply without a restart). Every resume gets a damage score anchored to weighted JD skill coverage. Stack evidence can adjust the score by at most 10% downward; family resistance can penalize a mismatched lane; senior/lead evidence and curated-folder factors are bounded. The final score is capped at JD keyword coverage, so no bonus can hide missing skills. Named resume files use their curated filename for family inference; configured numbered-folder families remain authoritative. Near-ties use local semantic similarity. Resume IDs are filenames without .docx for files directly in RESUMES_DIR, or folder numbers for legacy numbered subfolders. IDs in ignore are never used.",
+  "default": "",
+  "margin": 8,
+  "tie_gap": 3,
+  "custom": [],
+  "seniority": 1.0,
+  "ignore": ["16"],
+
+  "families": {
+    "ai":    ["1", "2", "8", "9", "12", "14", "15"],
+    "ds":    ["3", "4"],
+    "java":  ["5", "7"],
+    "cloud": ["6", "17"],
+    "gov":   ["10", "11"],
+    "po":    ["13"]
+  },
+
+  "_job_families_help": "Which family a job belongs to, decided from its title. A title can name several (\"Java Lead [AI driven]\" = java + ai, and the resume's smallest clash counts) unless one is listed in `exclusive`, which then wins alone. A job that matches none gets no wrong-lane penalty.",
+  "exclusive": ["gov", "po"],
+  "job_families": [
+    ["ds",    ["data scientist", "data science", "applied scientist", "research scientist", "decision scientist"]],
+    ["gov",   ["ai governance", "responsible ai", "model risk", "ai risk", "ai review", "ai ethics", "ai assurance", "ai compliance", "governance architect", "governance consultant"]],
+    ["po",    ["product owner"]],
+    ["ai",    ["ai", "a i", "ml", "machine learning", "llm", "genai", "gen ai", "generative ai", "agentic", "mlops", "llmops", "nlp", "computer vision", "deep learning", "rag", "ai ml", "artificial intelligence", "chatbot", "conversational ai", "copilot", "mcp"]],
+    ["java",  ["java", "spring", "spring boot", "j2ee", "full stack", "fullstack", "backend", "back end", "react", "angular", "node", "microservices"]],
+    ["cloud", ["cloud", "devops", "dev ops", "sre", "site reliability", "platform engineer", "infrastructure", "kubernetes", "terraform", "aws architect", "azure architect", "solutions architect", "solution architect", "aws engineer", "aws developer", "serverless", "lambda"]]
+  ],
+
+  "_resistance_help": "R% = how badly a resume family clashes with the job family (row = job, column = resume). 0 = perfect, 10-30 = related (small penalty), 40-60 = stretch, 75+ = wrong lane (cliff to ~0.25 or less).",
+  "resistance": {
+    "ai":    { "ai": 0,  "cloud": 10, "ds": 20, "gov": 40, "po": 60, "java": 75 },
+    "ds":    { "ds": 0,  "ai": 20, "gov": 40, "cloud": 40, "po": 60, "java": 75 },
+    "java":  { "java": 0, "cloud": 30, "ai": 40, "po": 60, "gov": 75, "ds": 75 },
+    "cloud": { "cloud": 0, "ai": 10, "java": 30, "ds": 50, "gov": 60, "po": 60 },
+    "gov":   { "gov": 0, "ai": 25, "ds": 30, "po": 40, "cloud": 60, "java": 75 },
+    "po":    { "po": 0, "ai": 30, "gov": 40, "cloud": 50, "java": 50, "ds": 50 }
+  },
+
+  "_clusters_help": "Stack clusters for the multi-stack bonus (skill names as in src/vocab.js, lowercase).",
+  "clusters": {
+    "genai": ["llm", "rag", "generative ai", "agentic ai", "multi-agent systems", "langchain", "langgraph", "llamaindex", "vector search", "embeddings", "prompt engineering", "fine-tuning", "azure openai", "gpt", "aws bedrock", "semantic search", "knowledge graph", "llm evaluation", "guardrails"],
+    "ml":    ["machine learning", "deep learning", "pytorch", "tensorflow", "scikit-learn", "xgboost", "nlp", "computer vision", "mlops", "mlflow", "model deployment", "model monitoring", "sagemaker", "vertex ai", "azure machine learning", "feature engineering", "predictive modeling", "time series", "statistics"],
+    "data":  ["spark", "pyspark", "databricks", "snowflake", "kafka", "airflow", "etl", "data pipelines", "sql", "data warehouse", "dbt", "azure data factory", "bigquery", "redshift", "data modeling", "power bi", "tableau", "data governance", "data quality"],
+    "cloud": ["aws", "azure", "gcp", "kubernetes", "docker", "terraform", "ci/cd", "lambda", "eks", "aks", "helm", "jenkins", "github actions", "cloudformation", "linux", "prometheus"],
+    "app":   ["java", "j2ee", "spring boot", "spring", "spring security", "spring cloud", "microservices", "react", "angular", "node.js", "typescript", "javascript", "rest", "graphql", "hibernate", "kafka", "ibm mq", "jBPM", "c#"]
+  },
+
+  "_lanes_help": "Title words per resume ID. For a .docx directly in RESUMES_DIR, the ID is its filename without .docx; for legacy numbered subfolders, use the number. 1 hit in the job title = d 110, 2+ hits = d 115.",
+  "lanes": {
+    "1":  ["ai ml engineer", "ml engineer", "machine learning engineer", "mlops", "llmops", "applied ml", "ai engineer", "ai ml"],
+    "2":  ["full stack ai", "ai full stack", "fullstack ai", "ai developer", "ai software engineer", "forward deployed", "fde"],
+    "3":  ["data scientist", "data science", "databricks", "knowledge graph", "decision intelligence"],
+    "4":  ["graph rag", "graphrag", "routing", "lead routing", "case routing"],
+    "5":  ["full stack developer", "full stack engineer", "fullstack developer", "java full stack", "java full stack lead", "senior java", "senior full stack", "mid-level java", "mid level java", "react", "angular"],
+    "6":  ["cloud architect", "solutions architect", "solution architect", "aws architect", "azure architect", "devops", "platform engineer", "sre", "kubernetes", "terraform", "infrastructure engineer", "cloud engineer"],
+    "7":  ["java backend", "backend engineer", "backend developer", "java developer", "java engineer", "java lead", "senior java", "mid-level java", "mid level java", "spring boot", "microservices", "kafka"],
+    "8":  ["genai", "gen ai", "generative ai", "agentic", "agentic ai", "llm", "llm engineer", "rag", "langgraph", "langchain"],
+    "9":  ["azure ai", "azure openai", "copilot", "microsoft copilot", "declarative agent", "azure ai engineer", "m365"],
+    "10": ["ai governance", "responsible ai", "model risk", "ai risk", "ai review", "governance consultant"],
+    "11": ["ai architect", "governance architect", "ai review", "semantic ai", "ai governance"],
+    "12": ["agentic ai architect", "agentic architect", "agentcore", "bedrock", "aws ai", "multi agent", "context engineering"],
+    "13": ["product owner", "technical product owner", "iam", "identity", "entra"],
+    "14": ["genai architect", "gen ai architect", "generative ai architect", "ai solution architect", "ai solutions architect", "llm architect"],
+    "15": ["mcp", "api developer", "ai api", "api management", "integration developer", "agentic ai developer"],
+    "17": ["aws engineer", "aws developer", "serverless", "lambda", "aws glue", "step functions", "node js"]
+  }
+}
