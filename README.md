@@ -12,8 +12,8 @@ every 60s ─► nvoids listing ─► new job ids only ─► open each posting
                                                      │
                      filters: skip W2/C2H-only, citizens/GC-only, no-H1B, clearance,
                      consultant hotlists & "resume of my consultant" posts, non-engineering
-                     titles (BA/PM/QA/SAP/Salesforce…); keep AI/ML, Java-related and Cloud/DevOps
-                     roles, including postings whose JD mentions Java or its JVM/Spring stack; flag doubtful ones
+                     titles (BA/PM/QA/SAP/Salesforce…); keep only AI/ML roles (an AI/ML term
+                     in the title, or MIN_AI_JD_TERMS AI/ML technologies in the JD); flag doubtful ones
                                                      │
               score every resume in Resumes AI\1, \2, … against the JD (local AI model +
               skill keywords; no data leaves your PC). Below MIN_MATCH_SCORE → no draft.

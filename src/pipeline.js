@@ -46,7 +46,8 @@ async function processJob(id) {
 // Match resumes and write the draft. Shared by nvoids postings and JDs you paste in (manual: true).
 // A manual JD is one you chose yourself, so it is never dropped: what would have skipped an nvoids
 // posting (W2-only, not AI/ML, low resume fit) becomes a warning on the draft instead.
-export async function makeDraft(job, verdict, { manual = false, matchResult } = {}) {
+// force: you chose "Apply anyway" on a low-fit posting, so the minimum match is not applied (shown as a warning instead).
+export async function makeDraft(job, verdict, { manual = false, matchResult, force = false } = {}) {
   const id = job.id;
   const { ranked, method, jdSkills } = matchResult ?? await rankResumes(job.jd_text || job.title, job.title);
   if (!ranked.length) { setJobStatus(id, 'no_resume', 'no resumes found in RESUMES_DIR'); logEvent('error', 'no_resume', id, 'No resumes found — check RESUMES_DIR'); return null; }
@@ -63,7 +64,7 @@ export async function makeDraft(job, verdict, { manual = false, matchResult } = 
     chosen = ranked.find(r => r.folder === prior.folder);
     verdict.flags.push(`Same job already sent to ${prior.to_email} (same company, ${prior.how}) on ${prior.sent_at.slice(0, 10)} with folder ${prior.folder}: using that resume again`);
   } else if (!thin && (chosen.keyword ?? chosen.score) < config.minMatchScore) {
-    if (!manual) {
+    if (!manual && !force) {
       const keywordScore = chosen.keyword ?? chosen.score;
       const reason = `best resume (folder ${chosen.folder}) scored ${chosen.score}% (${keywordScore}% keyword coverage; minimum ${config.minMatchScore}%)`;
       db.prepare(`UPDATE jobs SET match_score = ?, match_method = ?, ranking_json = ?, updated_at = ? WHERE id = ?`)
@@ -72,7 +73,9 @@ export async function makeDraft(job, verdict, { manual = false, matchResult } = 
       logEvent('info', 'low_match', id, `${job.title}: ${reason}; no draft`);
       return null;
     }
-    verdict.flags.push(`Low fit: your best resume (folder ${chosen.folder}) covers only ${chosen.keyword ?? chosen.score}% of this JD (the bot skips nvoids posts below ${config.minMatchScore}%)`);
+    verdict.flags.push(force
+      ? `Applied anyway: your best resume (${chosen.folder}) covers ${chosen.keyword ?? chosen.score}% of this JD, below your ${config.minMatchScore}% minimum`
+      : `Low fit: your best resume (folder ${chosen.folder}) covers only ${chosen.keyword ?? chosen.score}% of this JD (the bot skips nvoids posts below ${config.minMatchScore}%)`);
   }
 
   const draft = buildDraft(job, chosen, { thin });
@@ -87,6 +90,24 @@ export async function makeDraft(job, verdict, { manual = false, matchResult } = 
   logEvent('info', 'drafted', id, `${manual ? `MANUAL #${id} ` : ''}${job.title} — ${verdict.reason}. Draft → ${job.recruiter_email}, ${why}${thin ? ', THIN JD' : ''}${verdict.flags.length ? `, ${verdict.flags.length} warning(s)` : ''}`,
     { ranking: ranked.map(r => ({ folder: r.folder, score: r.score })), flags: verdict.flags, manual });
   return db.prepare(`SELECT * FROM applications WHERE job_id = ?`).get(id);
+}
+
+// "Apply anyway" (Activity → Low resume fit): draft a low-fit posting with your best resume, whatever its match.
+// It still lands in Review for approval and still goes through every vendor rule at send time.
+export async function applyAnyway(id) {
+  const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(Number(id));
+  if (!job || job.status !== 'low_match') throw new Error('This posting is not in the low-fit list');
+  if (!job.recruiter_email) throw new Error('This posting has no recruiter email');
+  const existing = db.prepare(`SELECT id FROM applications WHERE job_id = ?`).get(job.id);
+  if (existing) throw new Error('This posting already has a draft or email');
+  const verdict = classify(job);
+  if (!verdict.keep) verdict.flags.unshift(`Today's filters would skip this posting: ${verdict.reason}`);
+  const matchResult = await rankResumes(job.jd_text || job.title, job.title);
+  if (!matchResult.ranked.length) throw new Error('No resumes found in your resume folder');   // nothing changed on the posting
+  const app = await makeDraft(job, verdict, { force: true, matchResult });
+  if (!app) throw new Error('No draft could be made (see the Log)');
+  logEvent('info', 'apply_anyway', job.id, `You chose Apply anyway: ${job.title} (${app.match_score}%)`);
+  return { app_id: app.id, score: app.match_score };
 }
 
 export async function rematchLowMatch(id) {

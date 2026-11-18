@@ -7,7 +7,8 @@
 //     Review / Manual: a list bar on the left (New postings → Needs fixing → Standard), the chosen draft in
 //     the work area, JD under the email, Approve/Skip pinned to the bottom. Keyboard: j/k ↑/↓ move,
 //     a approve, s skip, r re-match, x select, / filter.
-// Theme: teal, hot pink, ink black, and coral.
+// Theme: a macOS System Settings window, centred on the page. Sidebar (search, profile, icon rows), toolbar with
+// back/forward and the pane title, grouped rows, popup buttons, switches. Review and Manual push a draft over the list.
 import { config, emailConfigured, dailyCap, ROOT } from './config.js';
 import { db, getState } from './db.js';
 import { ccFor, getCcEmails, HISTORY_PATH } from './email.js';
@@ -24,145 +25,283 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
 const CSS = `
-:root{--bg:#07110f;--card:rgba(8,20,18,.86);--card-solid:#0a1715;--ink:#eafaf5;--muted:#8fb8ad;--line:#1f3d37;
-  --accent:#ff3d7f;--accent2:#2ec4a0;--coral:#ff7b6b;--ok:#2ee6a8;--warn:#ff9f6b;--bad:#ff4d6d;
-  --glow:0 0 0 1px rgba(255,61,127,.55),0 6px 22px rgba(255,61,127,.28);--glow2:0 0 0 1px rgba(46,196,160,.55),0 6px 20px rgba(46,196,160,.22);
-  --field:rgba(3,10,9,.85);
-  --head:'Orbitron','Segoe UI',sans-serif;--body:'Inter','Segoe UI',system-ui,sans-serif}
+/* ── macOS System Settings, as a web page ─────────────────────────────────────────────────────────
+   Measured from System Settings on macOS 26: 232pt sidebar, 28pt capsule search, 32pt sidebar rows with
+   10pt-radius selection, 52pt toolbar with a back/forward capsule, 12pt-radius grouped rows (38pt, 10pt
+   insets, hairline separators), up/down popup buttons, compact switches, hero header per pane.
+   Accent: one orange, used only where macOS uses the accent colour (switch on, default button, badges, focus). */
+:root{
+  color-scheme:light dark;
+  --accent:#ff5b00;--accent2:var(--accent);--on-accent:#fff;--tint:rgba(255,91,0,.12);
+  --page:#dedee3;--win:#f6f6f6;--side:#e9e9eb;--group:rgba(0,0,0,.035);--group-edge:rgba(0,0,0,.05);
+  --ink:#1d1d1f;--ink2:rgba(0,0,0,.55);--ink3:rgba(0,0,0,.32);--muted:var(--ink2);--faint:var(--ink3);
+  --sep:rgba(0,0,0,.08);--line:var(--sep);--line2:rgba(0,0,0,.14);
+  --fill:rgba(0,0,0,.05);--fill2:rgba(0,0,0,.075);--fill-hover:rgba(0,0,0,.09);--sel:rgba(0,0,0,.085);
+  --field:rgba(0,0,0,.045);--knob:#fff;--track:rgba(0,0,0,.12);
+  --ok:var(--ink);--warn:var(--accent);--bad:#e0352b;--coral:var(--accent);
+  --shadow:0 0 0 .5px rgba(0,0,0,.18),0 24px 70px rgba(0,0,0,.22),0 6px 18px rgba(0,0,0,.08);
+  --ring:0 0 0 3px rgba(255,91,0,.35);--glow:var(--ring);
+  --font:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Helvetica Neue','Segoe UI',system-ui,sans-serif;
+  --head:var(--font);--body:var(--font);--mono:var(--font);
+  --sidebar:240px}
+@media (prefers-color-scheme:dark){:root{
+  --accent:#ff6a14;--tint:rgba(255,106,20,.18);
+  --page:#000;--win:#1e1e1e;--side:#2a2a2a;--group:rgba(255,255,255,.045);--group-edge:rgba(255,255,255,.04);
+  --ink:#f2f2f2;--ink2:rgba(255,255,255,.55);--ink3:rgba(255,255,255,.32);
+  --sep:rgba(255,255,255,.075);--line2:rgba(255,255,255,.13);
+  --fill:rgba(255,255,255,.07);--fill2:rgba(255,255,255,.1);--fill-hover:rgba(255,255,255,.14);--sel:rgba(255,255,255,.1);
+  --field:rgba(255,255,255,.07);--knob:#f2f2f2;--track:rgba(255,255,255,.14);--bad:#ff5f57;
+  --shadow:0 0 0 .5px rgba(255,255,255,.12),0 24px 70px rgba(0,0,0,.7)}}
+
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;font:13.5px/1.5 var(--body);color:var(--ink);background:var(--bg);display:flex;flex-direction:column;overflow:hidden}
-h1,h2,h3,.logo,.tabs a,.kpi span,.group,th,label,.badge{font-family:var(--head)}
-a{color:var(--accent2);transition:color .15s}a:hover{color:var(--accent)}
+body{margin:0;display:flex;align-items:center;justify-content:center;padding:32px;background:var(--page);color:var(--ink);
+  font:400 13px/1.38 var(--font);letter-spacing:-.003em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden}
+a{color:var(--accent);text-decoration:none}
+b,strong{font-weight:600}
+h1,h2,h3,h4,p{margin:0}
+::selection{background:var(--tint)}
+svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 
-/* header */
-header{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 16px;background:rgba(5,13,12,.94);border-bottom:2px solid var(--accent);backdrop-filter:blur(8px);animation:drop .45s cubic-bezier(.2,1.4,.4,1) both}
-.logo{font-size:19px;font-weight:700;letter-spacing:.18em;color:var(--accent);display:inline-block;animation:glitch-idle 6s steps(1) infinite}
-.logo:hover{animation:boom .5s cubic-bezier(.2,1.6,.4,1),glitch .35s steps(2) 2}
-/* tabs never shrink into the search box: when the row is full, the header wraps instead */
-.tabs{display:flex;gap:0;flex:none;max-width:100%;overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}
-.tabs a{position:relative;padding:6px 8px;font-size:10.5px;white-space:nowrap;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;color:var(--accent2);border-radius:6px;transition:color .15s,background .15s}
-.tabs a::after{content:"";position:absolute;left:10px;right:10px;bottom:2px;height:2px;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .22s cubic-bezier(.2,1.4,.4,1)}
-.tabs a:hover{color:var(--ink);background:rgba(46,196,160,.08)}.tabs a:hover::after,.tabs a.on::after{transform:scaleX(1)}.tabs a.on{color:var(--ink)}
-.tabs a b{font-family:var(--body);font-size:10px;margin-left:4px;padding:0 5px;border-radius:8px;background:var(--accent);color:#fff}
-/* search + controls travel together: beside the tabs when there is room, otherwise a full-width row of their own */
-.hright{display:flex;align-items:center;gap:12px;flex:1 1 560px;min-width:0}
-.search{display:flex;gap:6px;flex:1 1 200px;min-width:160px;max-width:420px}
-.ctrl{display:flex;gap:6px;flex:none;align-items:center;margin-left:auto}
-/* KPI strip */
-.kpis{flex:none;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:10px 16px;background:rgba(5,13,12,.6);border-bottom:1px solid var(--line)}
-.kpi{position:relative;overflow:hidden;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);text-decoration:none;color:var(--ink);
-  transition:transform .18s cubic-bezier(.2,1.5,.4,1),box-shadow .18s,border-color .18s;animation:pop .4s cubic-bezier(.2,1.35,.4,1) both}
-.kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent2)}
-.kpi:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:var(--glow)}
-.kpi::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:40%;pointer-events:none;background:linear-gradient(100deg,transparent,rgba(255,255,255,.14),transparent);transform:skewX(-18deg)}
-.kpi:hover::after{animation:sweep .6s ease-out}
-.kpi span{display:block;font-size:9px;color:var(--muted);letter-spacing:.13em;text-transform:uppercase}
-.kpi b{font-family:var(--head);font-size:19px;font-variant-numeric:tabular-nums}.kpi small{color:var(--muted);font-size:12px;margin:0 3px}
-.kpi.bad::before{background:var(--bad)}.kpi.hot::before{background:var(--accent)}
-.kpi:nth-child(2){animation-delay:.04s}.kpi:nth-child(3){animation-delay:.08s}.kpi:nth-child(4){animation-delay:.12s}.kpi:nth-child(5){animation-delay:.16s}
+/* ── Window ─────────────────────────────────────────────────────────── */
+.window{position:relative;display:flex;width:min(1080px,100%);height:min(840px,100%);border-radius:26px;overflow:hidden;background:var(--win);box-shadow:var(--shadow)}
 
-/* work area */
-main{flex:1;min-height:0;display:flex}
-.page{flex:1;overflow:auto;padding:16px 18px 30px}
-@media (min-width:1280px){.page.narrow{max-width:min(1150px,calc(100vw - 56.25vh - 40px))}}
-.split{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,380px) 1fr}
-@media (min-width:1500px){.split{grid-template-columns:400px minmax(0,calc(100vw - 400px - 56.25vh + 60px)) 1fr}}
-.listbar{min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:rgba(5,13,12,.88);}
-.listtools{flex:none;padding:10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
-.listtools .rowx{display:flex;gap:6px;align-items:center}
-.list{flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 0 20px}
-.group{position:sticky;top:0;z-index:1;padding:8px 12px 6px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent2);background:rgba(5,13,12,.97);display:flex;justify-content:space-between}
-.group.hot{color:var(--accent)}.item.pop{animation:popin .6s ease-out}@keyframes popin{from{opacity:0;transform:translateX(-14px);background:rgba(255,62,165,.25)}to{opacity:1;transform:none}}.group.fix{color:var(--warn)}
-.item{display:grid;grid-template-columns:18px 1fr auto;gap:8px;align-items:center;padding:8px 12px;border-left:3px solid transparent;cursor:pointer;outline:none;
-  transition:background .12s,border-color .12s,transform .12s;animation:slide .3s both}
-.item:hover{background:rgba(46,196,160,.07)}.item.active{background:rgba(255,61,127,.12);border-left-color:var(--accent)}
-.item:focus-visible{box-shadow:inset 0 0 0 1px var(--accent2)}
-.item.hot{border-left-color:rgba(255,61,127,.55)}.item.fix{border-left-color:rgba(255,159,107,.6)}
-.item.gone{opacity:.35;pointer-events:none}
-.it-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.it-sub{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.it-score{text-align:right;font-family:var(--head);font-size:13px;color:var(--accent2)}.it-score small{display:block;font-family:var(--body);font-size:10.5px;color:var(--muted)}
-.item input{accent-color:var(--accent);margin:0}
-.bulk{display:none;gap:6px;align-items:center;font-size:12px;color:var(--muted)}.bulk.on{display:flex}
-.pane{min-height:0;overflow:hidden;display:flex;flex-direction:column;background:rgba(7,17,15,.86)}
-.empty{margin:auto;text-align:center;color:var(--muted);max-width:420px;padding:30px}.empty h3{color:var(--ink);letter-spacing:.06em}
-.pane.idle{cursor:default}
-.pane.idle .empty{padding:14px 18px;border:1px solid var(--line);border-radius:12px;background:rgba(5,13,12,.82);max-width:360px}
-kbd{font:11px ui-monospace,Consolas,monospace;padding:1px 6px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;color:var(--ink)}
+/* sidebar */
+.sidebar{flex:none;width:var(--sidebar);display:flex;flex-direction:column;background:var(--side);border-right:1px solid var(--sep)}
+.titlebar{flex:none;height:52px;display:flex;align-items:center;padding:0 20px}
+.lights{display:flex;gap:8px}
+.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.12)}
+.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.sb-search{flex:none;margin:0 10px 8px;position:relative}
+.sb-search input{width:100%;height:28px;padding:0 10px 0 30px;border:0;border-radius:14px;background:var(--fill2);color:var(--ink);font:400 13px var(--font);outline:none}
+.sb-search input::placeholder{color:var(--ink2)}
+.sb-search input:focus{box-shadow:var(--ring)}
+.sb-search svg{position:absolute;left:10px;top:6px;color:var(--ink2)}
+.sb-scroll{flex:1;overflow-y:auto;padding:4px 10px 16px;scrollbar-width:none}
+.sb-profile{display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:12px;border-radius:10px;color:var(--ink);text-decoration:none}
+.sb-profile:hover{background:var(--fill)}
+.sb-profile.on{background:var(--sel)}
+.avatar{width:38px;height:38px;flex:none;border-radius:50%;display:grid;place-items:center;background:linear-gradient(160deg,#ff8a3d,#ff5b00);color:#fff;font:700 15px/1 var(--font);letter-spacing:.04em}
+.sb-profile b{display:block;font:600 13px/1.25 var(--font)}
+.sb-profile small{display:block;font:400 11px/1.3 var(--font);color:var(--ink2)}
+.sb-group{display:flex;flex-direction:column;gap:0;margin-bottom:12px}
+.sb-item{display:flex;align-items:center;gap:10px;height:32px;padding:0 8px 0 9px;border-radius:10px;color:var(--ink);text-decoration:none;font:400 13px var(--font)}
+.sb-item:hover{background:var(--fill)}
+.sb-item.on{background:var(--sel)}
+.sb-item svg.i{opacity:.82}
+.sb-item b{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;background:var(--accent);color:var(--on-accent);font:600 11px/18px var(--font);text-align:center}
 
-/* draft view */
-.draft{flex:1;min-height:0;display:flex;flex-direction:column;animation:pop .3s cubic-bezier(.2,1.35,.4,1) both}
-.draft-head{flex:none;padding:14px 18px 10px;border-bottom:1px solid var(--line)}
-.draft-head h3{margin:0 0 4px;font-size:15px;letter-spacing:.03em}.draft-head h3 a{color:var(--ink);text-decoration:none}.draft-head h3 a:hover{color:var(--accent)}
-.draft-body{flex:1;min-height:0;overflow:auto;padding:12px 18px}
-.draft-actions{flex:none;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 18px;border-top:1px solid var(--line);background:rgba(5,13,12,.95)}
-.draft-actions .msg{margin-left:auto;font-size:12.5px}
-.meta{color:var(--muted);font-size:12.5px}
-.warn{color:var(--warn);margin:3px 0;font-size:12.5px}.err{color:var(--bad);font-weight:600}.ok{color:var(--ok)}.bad{color:var(--bad)}
-label{display:block;font-size:10px;color:var(--muted);margin:10px 0 3px;text-transform:uppercase;letter-spacing:.1em}
-input,select,textarea{width:100%;font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s}
-input[type=checkbox]{width:auto}
-input:hover,select:hover,textarea:hover{border-color:var(--accent2)}input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:var(--glow)}
-textarea{min-height:210px;resize:vertical}
-pre{white-space:pre-wrap;font:12.5px/1.45 ui-monospace,'Cascadia Code',Consolas,monospace;background:var(--field);border:1px solid var(--line);padding:10px;border-radius:8px;margin:0}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.kw{font-size:12px;color:var(--muted);margin-top:4px}.kw span{display:inline-block;padding:1px 8px;margin:2px;border-radius:4px;border:1px solid var(--line);animation:chip .35s cubic-bezier(.2,1.6,.4,1) both}
-.kw .m{border-color:var(--accent2);color:var(--accent2)}
-.badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:9.5px;font-weight:700;letter-spacing:.1em;border:1px solid currentColor;vertical-align:middle}
-.badge.hot{background:var(--accent);border-color:var(--accent);color:#fff;animation:pulse 1.8s ease-in-out infinite}
-.jd{margin-top:14px}.jd h4{margin:0 0 6px;font:600 10px var(--head);letter-spacing:.14em;color:var(--accent2);text-transform:uppercase}
+/* content column */
+.content{flex:1;min-width:0;display:flex;flex-direction:column}
+.toolbar{flex:none;height:52px;display:flex;align-items:center;gap:12px;padding:0 16px 0 10px;border-bottom:1px solid var(--sep)}
+.navbtns{display:flex;align-items:center;height:34px;padding:0 4px;border-radius:17px;background:var(--fill);box-shadow:inset 0 0 0 .5px var(--group-edge)}
+.navbtns button{width:30px;height:28px;padding:0;border:0;border-radius:14px;background:transparent;color:var(--ink2);display:grid;place-items:center;cursor:pointer}
+.navbtns button,.navbtns button:hover,.navbtns button:active{box-shadow:none;filter:none}
+.navbtns button:hover{color:var(--ink);background:transparent}
+.navbtns button:focus-visible{box-shadow:none;color:var(--accent)}
+.navbtns span{width:1px;height:16px;background:var(--line2)}
+.tb-title{font:600 15px/1 var(--font);letter-spacing:-.01em;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:8px;font:400 12px var(--font);color:var(--ink2);white-space:nowrap}
+.tb-right b{color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums}
+.scroller{flex:1;min-height:0;overflow-y:auto;padding:20px 20px 28px}
+.pagewrap{max-width:680px;margin:0 auto}
+.pagewrap.wide{max-width:none}
 
-/* buttons */
-button{font:inherit;font-size:12.5px;font-weight:600;padding:6px 13px;border-radius:8px;border:1.5px solid var(--accent2);background:transparent;color:var(--accent2);cursor:pointer;position:relative;
-  transition:transform .14s cubic-bezier(.2,1.6,.4,1),box-shadow .15s,background .15s,color .15s;white-space:nowrap}
-button:hover{transform:translateY(-2px);box-shadow:var(--glow2);background:var(--accent2);color:#04110e}button:active{transform:scale(.94)}
-button.primary{border-color:var(--accent);background:var(--accent);color:#fff}button.primary:hover{background:#ff5a93;border-color:#ff5a93;box-shadow:var(--glow);color:#fff}
-button.primary::after{content:"";position:absolute;inset:-3px;border-radius:10px;border:2px solid var(--accent);opacity:0;pointer-events:none}button.primary:hover::after{animation:ring .55s ease-out}
-button.small{font-size:11.5px;padding:4px 9px}button:disabled{opacity:.5;cursor:wait;transform:none}
-button.danger{border-color:var(--bad);color:var(--bad)}button.danger:hover{background:var(--bad);border-color:var(--bad);color:#fff;box-shadow:0 6px 20px rgba(255,77,109,.3)}
-.rm-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* ── Hero (top of each pane) ───────────────────────────────────────── */
+.hero{display:flex;flex-direction:column;align-items:center;text-align:center;padding:22px 24px 20px;margin-bottom:10px;border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge)}
+.hero-icon{width:52px;height:52px;border-radius:13px;display:grid;place-items:center;margin-bottom:10px;background:var(--fill2);box-shadow:inset 0 0 0 .5px var(--line2)}
+.hero-icon svg.i{width:28px;height:28px;stroke-width:1.4}
+.hero-icon.accent{background:linear-gradient(160deg,#ff8a3d,#ff5b00);color:#fff;box-shadow:none}
+.hero h2{font:700 22px/1.2 var(--font);letter-spacing:-.02em;margin-bottom:4px}
+.hero p{font:400 12px/1.45 var(--font);color:var(--ink2);max-width:440px}
 
-/* panels / tables (Overview, Sent, Vendors, Logs, Health) */
-.grid{display:grid;gap:14px}
-.g3{grid-template-columns:repeat(3,minmax(0,1fr))}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
-.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:0;display:flex;flex-direction:column;
-  transition:border-color .18s,box-shadow .18s;animation:pop .42s cubic-bezier(.2,1.35,.4,1) both}
-.panel:hover{border-color:rgba(46,196,160,.5)}
-.panel h3{margin:0 0 10px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent2);display:flex;align-items:center;gap:8px}
-.panel h3::before{content:"";width:14px;height:3px;background:var(--accent);border-radius:2px}
-.panel .scroll{overflow:auto;min-height:0}
-.panel:nth-child(2){animation-delay:.05s}.panel:nth-child(3){animation-delay:.1s}.panel:nth-child(4){animation-delay:.15s}.panel:nth-child(5){animation-delay:.2s}.panel:nth-child(6){animation-delay:.25s}
-.fill{height:100%;min-height:0}
-.big{font-family:var(--head);font-size:38px;color:var(--accent);letter-spacing:.04em;line-height:1.1}
-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
-th{position:sticky;top:0;z-index:1;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:var(--card-solid);text-align:left}
-th,td{border-bottom:1px solid var(--line);padding:7px 9px;vertical-align:top}tr td{transition:background .12s}tr:hover td{background:rgba(255,61,127,.06)}
-.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;border:1px solid currentColor}
-.pill.rtr{color:var(--accent2)}.pill.submitted{color:#9fd3ff}.pill.interview{color:var(--accent)}.pill.offer,.pill.placed{color:var(--ok)}.pill.not_interested{color:var(--muted)}
-.subtabs{display:flex;gap:6px;margin-bottom:12px}.subtabs a{padding:5px 12px;border:1px solid var(--line);border-radius:16px;text-decoration:none;font-size:12px}.subtabs a.on{border-color:var(--accent);color:var(--ink)}
-.check{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line)}.check:last-child{border:0}
-.check i{font-style:normal;width:20px;text-align:center}.check b{display:block}
+/* ── Grouped rows ──────────────────────────────────────────────────── */
+.section{font:700 13px/1 var(--font);margin:20px 10px 8px}
+.section:first-child{margin-top:4px}
+.section .aside{float:right;font-weight:400;color:var(--ink2)}
+.grp{border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge);padding:0 10px;margin-bottom:10px}
+.row{position:relative;display:flex;align-items:center;gap:10px;min-height:38px;padding:7px 0;color:var(--ink);text-decoration:none}
+.row+.row::before,.row+details>.row::before,details+.row::before,details+details>.row::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;background:var(--sep)}
+.row.tall{min-height:52px}
+a.row:hover,.row.click:hover{cursor:pointer}
+a.row:hover .lbl,.row.click:hover .lbl{color:var(--ink)}
+.row .lbl{flex:1;min-width:0}
+.row .lbl>div:first-child,.row .lbl>span:first-child{display:block;font:400 13px/1.35 var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .lbl.wrap>div:first-child{white-space:normal}
+.row .sub{display:block;font:400 11px/1.4 var(--font);color:var(--ink2);margin-top:1px;overflow:hidden;text-overflow:ellipsis}
+.row .sub.one{white-space:nowrap}
+.row .lbl a{color:var(--ink)}.row .lbl a:hover{color:var(--accent)}
+.row .sub.clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.row .val{flex:none;color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.row .val.ink{color:var(--ink)}
+.row .ico{width:26px;height:26px;flex:none;border-radius:7px;display:grid;place-items:center;background:var(--fill2);color:var(--ink)}
+.row .ico svg.i{width:15px;height:15px}
+.chev{flex:none;width:7px;height:7px;margin:0 4px 0 2px;border:solid var(--ink3);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
+.row .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.row .dot.ring{background:transparent;box-shadow:inset 0 0 0 1.5px var(--accent)}
+.row .dot.grey{background:var(--ink3)}
+.empty-row{min-height:44px;display:flex;align-items:center;justify-content:center;color:var(--ink2);font:400 12px var(--font)}
+.foot{font:400 11px/1.45 var(--font);color:var(--ink2);margin:6px 10px 0}
+.meta{font:400 11px/1.4 var(--font);color:var(--ink2)}
+.ok{color:var(--ink)}.bad,.err{color:var(--bad)}.warn{color:var(--accent)}
 
-/* motion */
-@keyframes pop{0%{opacity:0;transform:translateY(12px) scale(.97)}60%{opacity:1;transform:translateY(-2px) scale(1.005)}100%{opacity:1;transform:none}}
-@keyframes slide{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
-@keyframes drop{from{opacity:0;transform:translateY(-100%)}to{opacity:1;transform:none}}
-@keyframes boom{0%{transform:scale(1)}35%{transform:scale(1.16) rotate(-3deg)}65%{transform:scale(.96) rotate(1deg)}100%{transform:scale(1)}}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,61,127,.45)}50%{box-shadow:0 0 0 6px rgba(255,61,127,0)}}
-@keyframes glitch{0%{text-shadow:2px 0 var(--accent2),-2px 0 var(--accent);transform:translate(0)}50%{text-shadow:-3px 0 var(--accent2),3px 0 var(--accent);transform:translate(1px,-1px)}100%{text-shadow:none;transform:translate(0)}}
-@keyframes glitch-idle{0%,96%,100%{text-shadow:none;transform:none}97%{text-shadow:3px 0 var(--accent2),-3px 0 var(--accent);transform:translateX(2px)}98%{text-shadow:-2px 0 var(--accent2),2px 0 var(--accent);transform:translateX(-2px)}}
-@keyframes sweep{from{left:-60%}to{left:130%}}
-@keyframes ring{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(1.25)}}
-@keyframes chip{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:none}}
-@media (max-width:1100px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.g3{grid-template-columns:1fr 1fr}.search{flex-basis:220px}}
-@media (max-width:820px){.split{grid-template-columns:1fr}.listbar{max-height:40vh}.g3,.g2,.cols{grid-template-columns:1fr}body{overflow:auto}}
+/* status glyphs (Status pane) */
+.st{flex:none;width:20px;height:20px;border-radius:50%;position:relative}
+.st.ok{background:var(--fill2)}
+.st.ok::after{content:"";position:absolute;left:7px;top:4px;width:4px;height:8px;border:solid var(--ink);border-width:0 1.6px 1.6px 0;transform:rotate(45deg);opacity:.75}
+.st.bad{background:var(--bad)}
+.st.bad::after,.st.warn::after{content:"!";position:absolute;inset:0;display:grid;place-items:center;font:700 12px/20px var(--font);color:#fff;text-align:center}
+.st.warn{background:var(--accent)}
+
+/* ── Controls ──────────────────────────────────────────────────────── */
+input,select,textarea{font:400 13px var(--font);color:var(--ink)}
+.row input[type=text],.row input[type=search],.row input:not([type]),.row input[type=email],.row input[type=date],.row input[type=number]{
+  flex:1;min-width:0;height:24px;padding:0 6px;border:0;border-radius:6px;background:transparent;text-align:right;outline:none}
+.row input:focus{background:var(--field);box-shadow:var(--ring);text-align:left}
+.row input::placeholder{color:var(--ink3)}
+.row>label{flex:none;margin:0;color:var(--ink);font:400 13px var(--font)}
+.field-in{display:block;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:var(--field);outline:none}
+.field-in:focus{box-shadow:var(--ring)}
+textarea{display:block;width:100%;min-height:240px;padding:10px 0;border:0;background:transparent;resize:vertical;line-height:1.55;outline:none}
+.grp.text{padding:0 12px}
+.grp.text:focus-within{box-shadow:inset 0 0 0 .5px var(--group-edge),var(--ring)}
+pre{white-space:pre-wrap;word-break:break-word;margin:0;padding:10px 0;font:400 12px/1.55 var(--font);color:var(--ink)}
+/* popup button (select) */
+.popup{position:relative;display:inline-flex;align-items:center;max-width:60%}
+.popup select{appearance:none;-webkit-appearance:none;max-width:100%;height:24px;padding:0 30px 0 6px;border:0;border-radius:6px;background:transparent;text-align:right;text-align-last:right;cursor:pointer;outline:none;text-overflow:ellipsis}
+.popup select:focus-visible{box-shadow:var(--ring)}
+.popup::after{content:"";position:absolute;right:0;top:50%;width:22px;height:22px;margin-top:-11px;border-radius:50%;pointer-events:none;
+  background:var(--fill2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1.5 4.5 2.5-2.5 2.5 2.5M1.5 7.5 4 10l2.5-2.5'/%3E%3C/svg%3E") no-repeat center}
+.popup.left select{text-align:left;text-align-last:left}
+/* switch */
+.switch{position:relative;flex:none;width:38px;height:22px}
+.switch input{position:absolute;inset:0;margin:0;opacity:0;cursor:pointer;z-index:1}
+.switch span{position:absolute;inset:0;border-radius:11px;background:var(--track);transition:background .2s}
+.switch span::after{content:"";position:absolute;left:2px;top:2px;width:18px;height:18px;border-radius:50%;background:var(--knob);box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s cubic-bezier(.3,.7,.3,1)}
+.switch input:checked+span{background:var(--accent)}
+.switch input:checked+span::after{transform:translateX(16px);background:#fff}
+.switch input:focus-visible+span{box-shadow:var(--ring)}
+/* buttons (macOS push buttons) */
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:24px;padding:0 12px;border:0;border-radius:7px;
+  background:var(--fill2);color:var(--ink);font:400 13px var(--font);white-space:nowrap;cursor:pointer;box-shadow:inset 0 0 0 .5px var(--line2),0 .5px 1px rgba(0,0,0,.08)}
+button:hover{background:var(--fill-hover)}
+button:active{filter:brightness(.92)}
+button:focus-visible{outline:none;box-shadow:var(--ring)}
+button.primary{background:var(--accent);color:var(--on-accent);box-shadow:inset 0 .5px 0 rgba(255,255,255,.25),0 .5px 1px rgba(0,0,0,.15)}
+button.primary:hover{background:var(--accent);filter:brightness(1.06)}
+button.small{height:22px;padding:0 10px;font-size:12px}
+button.plain{background:transparent;box-shadow:none;color:var(--accent);padding:0 4px}button.plain:hover{text-decoration:underline}
+button.danger{color:var(--bad)}
+button:disabled{opacity:.45;cursor:default}
+button kbd{display:none}
+button.scan svg.i{width:13px;height:13px;margin-left:-2px}
+button.busy svg.i{animation:spin .9s linear infinite}
+.scan-msg{max-width:220px;overflow:hidden;text-overflow:ellipsis;color:var(--ink2)}.scan-msg.bad{color:var(--bad)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btnrow{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin:10px 2px 0}
+.btnrow .sp{flex:1}
+/* segmented control */
+.seg,.subtabs{display:inline-flex;gap:0;padding:2px;border-radius:8px;background:var(--fill2);flex-wrap:wrap}
+.seg a,.subtabs a{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 10px;border-radius:6px;font:400 12px var(--font);color:var(--ink);text-decoration:none;white-space:nowrap}
+.seg a:hover{background:var(--fill)}
+.seg a.on,.subtabs a.on{background:var(--win);box-shadow:0 .5px 2px rgba(0,0,0,.18),inset 0 0 0 .5px var(--group-edge)}
+@media (prefers-color-scheme:dark){.seg a.on,.subtabs a.on{background:#5b5b5f}}
+.seg a b,.subtabs a b{font-weight:400;color:var(--ink2);font-variant-numeric:tabular-nums}
+.filterbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+.filterbar .sp{flex:1}
+.filterbar input[type=search]{width:220px;height:26px;padding:0 10px 0 28px;border:0;border-radius:13px;background:var(--fill2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='5.5' cy='5.5' r='4.25'/%3E%3Cpath d='m8.8 8.8 3 3'/%3E%3C/svg%3E") no-repeat 10px center;outline:none}
+.filterbar input[type=search]:focus{box-shadow:var(--ring)}
+.filterbar a.quiet{font:400 12px var(--font);color:var(--accent)}
+.tag{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:5px;font:600 10.5px/1 var(--font);background:var(--fill2);color:var(--ink2);white-space:nowrap;vertical-align:1px}
+.tag.accent,.badge.hot,.badge.bad{background:var(--accent);color:var(--on-accent)}
+.tag.soft{background:var(--tint);color:var(--accent)}
+.badge{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:5px;font:600 10.5px/1 var(--font);background:var(--fill2);color:var(--ink2)}
+.pill{display:inline-flex;align-items:center;height:18px;padding:0 8px;border-radius:9px;font:500 11px/1 var(--font);background:var(--fill2);color:var(--ink)}
+.pill.interview,.pill.offer,.pill.placed{background:var(--accent);color:#fff}.pill.rtr,.pill.submitted{background:var(--tint);color:var(--accent)}.pill.not_interested{color:var(--ink2)}
+kbd{display:inline-block;min-width:16px;padding:0 4px;border-radius:4px;background:var(--fill2);font:500 10.5px/16px var(--font);text-align:center;color:var(--ink2)}
+
+/* disclosure rows (details) */
+details>summary{list-style:none;cursor:pointer}details>summary::-webkit-details-marker{display:none}
+details.disc>summary .chev{transition:transform .2s}
+details.disc[open]>summary .chev{transform:rotate(135deg);margin-top:-4px}
+details.disc>.disc-body{padding:2px 0 10px}
+
+/* ── Review / Manual: push navigation inside the content column ────── */
+.stack{flex:1;min-height:0;display:flex;flex-direction:column}
+.stack .view-root{flex:1;min-height:0;overflow-y:auto;padding:20px 20px 28px}
+.stack .pane{flex:1;min-height:0;display:none;flex-direction:column}
+.stack.detail .view-root{display:none}
+.stack.detail .pane{display:flex}
+.list{display:flex;flex-direction:column}
+.group{display:flex;align-items:baseline;justify-content:space-between;font:700 13px/1 var(--font);margin:20px 10px 8px}
+.group:first-child{margin-top:4px}
+.group b{font:400 12px var(--font);color:var(--ink2);font-variant-numeric:tabular-nums}
+.group.hot,.group.fix{color:var(--accent)}
+.group:has(+ .group),.group:last-child{display:none}
+.group.keep{display:flex}
+.item{position:relative;display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 10px;background:var(--group);cursor:pointer;outline:none}
+.group + .item{border-top-left-radius:12px;border-top-right-radius:12px}
+.item:has(+ .group),.item:last-child,.item:has(+ .foot){border-bottom-left-radius:12px;border-bottom-right-radius:12px;margin-bottom:10px}
+.item + .item::before{content:"";position:absolute;left:10px;right:10px;top:0;height:1px;background:var(--sep)}
+.item:hover{background:var(--fill)}
+.item:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
+.item input{display:none;margin:0;width:15px;height:15px;accent-color:var(--accent)}
+.list.selecting .item input,.view-root:has(.bulk.on) .item input{display:block}
+.item>div:nth-of-type(1){flex:1;min-width:0}
+.item::after{content:"";flex:none;width:7px;height:7px;margin:0 4px 0 2px;border:solid var(--ink3);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
+.it-title{font:400 13px/1.35 var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it-sub{font:400 11px/1.4 var(--font);color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.it-sub .tagline{color:var(--accent);font-weight:500}
+.item.hot .it-title::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:7px;vertical-align:1px}
+.it-score{flex:none;color:var(--ink2);font-variant-numeric:tabular-nums}
+.item.gone{display:none}
+.item.pop{animation:popin .6s ease-out}
+.listtools{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.bulk{display:none;align-items:center;gap:6px;height:36px;padding:0 6px 0 12px;border-radius:10px;background:var(--fill);font:400 12px var(--font);color:var(--ink2)}
+.bulk.on{display:flex}.bulk b{color:var(--ink)}.bulk .sp{flex:1}
+.rm-row{display:flex;align-items:center;gap:8px;font:400 12px var(--font);color:var(--ink2)}
+.empty{margin:auto;text-align:center;color:var(--ink2);max-width:360px;padding:40px 20px}
+.empty h3{font:700 17px/1.3 var(--font);color:var(--ink);margin:0 0 6px}
+
+/* draft detail */
+.draft{flex:1;min-height:0;display:flex;flex-direction:column}
+.draft-body{flex:1;min-height:0;overflow-y:auto;padding:20px 20px 24px}
+.draft-head{text-align:left;padding:18px 20px 16px;margin-bottom:10px;border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge)}
+.draft-head .kicker{display:flex;align-items:center;gap:8px;margin-bottom:6px;font:400 11px var(--font);color:var(--ink2)}
+.draft-head h3{font:700 17px/1.3 var(--font);letter-spacing:-.01em;margin:0 0 4px}
+.draft-head h3 a{color:var(--ink)}.draft-head h3 a:hover{color:var(--accent)}
+.callout{display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:10px 12px;border-radius:9px;background:var(--tint);font:400 12px/1.45 var(--font)}
+.callout::before{content:"";flex:none;width:8px;height:8px;margin-top:4px;border-radius:50%;background:var(--accent)}
+.warnlist div{display:flex;gap:8px;padding:4px 0;font:400 12px/1.45 var(--font)}
+.warnlist div::before{content:"";flex:none;width:6px;height:6px;margin-top:6px;border-radius:50%;background:var(--accent)}
+.draft-actions{flex:none;display:flex;align-items:center;gap:8px;padding:12px 20px;border-top:1px solid var(--sep);background:var(--win)}
+.draft-actions .sp{flex:1}
+.draft-actions .msg{font:400 12px var(--font);color:var(--ink2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kw{font:400 12px/1.9 var(--font);color:var(--ink2)}
+.kw i{font-style:normal}
+.kw span{display:inline-block;padding:0 7px;margin:1px 2px;border-radius:5px;background:var(--fill2);color:var(--ink);font:400 11.5px/20px var(--font)}
+.kw .m{background:var(--tint);color:var(--accent)}
+
+/* tables (Search results page) */
+.panel{border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge);padding:14px 14px;margin-bottom:10px}
+.panel>h3{font:700 13px var(--font);margin:0 0 8px}
+table{width:100%;border-collapse:collapse;font:400 12px/1.4 var(--font)}
+th{text-align:left;font:600 11px var(--font);color:var(--ink2);padding:6px 8px;border-bottom:1px solid var(--sep)}
+td{padding:8px;border-bottom:1px solid var(--sep);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td a{color:var(--ink)}td a:hover{color:var(--accent)}
+.nw{white-space:nowrap}
+
+@keyframes popin{from{background:var(--tint)}}
+@media (max-width:820px){body{padding:0}.window{border-radius:0;height:100%;width:100%}:root{--sidebar:200px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 `;
 
 // ── Client script shared by every page ────────────────────────────────────────
 
 const CLIENT_JS = `
+// Toolbar back: inside Review/Manual it closes the open draft (like a Settings sub-page); elsewhere it is browser back.
+function navBack(){ const st = document.getElementById('stack'); if (st && st.classList.contains('detail') && window.showRoot) showRoot(); else history.back() }
 async function post(url, data){
   const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Nvoids-Bot':'1'},body:JSON.stringify(data||{})});
   return r.json();
@@ -173,7 +312,20 @@ async function simple(url, data, btn, confirmText){
   const j = await post(url, data);
   if (j.ok) location.reload(); else { alert(j.error || 'Failed'); if (btn) btn.disabled = false }
 }
-async function pollNow(b){ b.disabled = true; b.textContent = 'Checking…'; await post('/api/poll'); location.reload() }
+// Scan Now: checks nvoids immediately (skipping the wait after failed checks) and says what happened.
+async function pollNow(b){
+  const msg = document.getElementById('scan-msg');
+  const label = b.dataset.label || b.innerHTML; b.dataset.label = label;
+  b.disabled = true; b.classList.add('busy'); b.lastChild.textContent = 'Scanning…';
+  let j; try { j = await post('/api/poll') } catch (e) { j = { ok: false, error: e.message } }
+  const err = !j.ok || j.error ? (j.error || 'Scan failed') : j.paused ? 'The watcher is paused. Turn on Watch nvoids first.' : j.skipped ? 'A scan is already running.' : '';
+  const say = (t, bad) => { if (msg) { msg.textContent = t; msg.title = t; msg.classList.toggle('bad', !!bad) } };
+  b.classList.remove('busy');
+  if (err) { say(/HTTP 52\d/.test(err) ? 'nvoids is down (' + err.match(/HTTP 52\d/)[0] + ')' : /fetch failed|ENOTFOUND|ECONN|timed? ?out|abort/i.test(err) ? 'Can’t reach nvoids' : err, true); if (msg) msg.title = err; b.innerHTML = label; b.disabled = false; return }
+  if (j.new || j.drafted) { say(j.new + ' new · ' + j.drafted + ' drafted'); setTimeout(() => location.reload(), 900); return }
+  say('No new postings'); b.innerHTML = label; b.disabled = false;
+  setTimeout(() => say(''), 6000);
+}
 // Re-match runs in the background: Stop ends it after the draft in hand, and the numbers update in place
 // (no page reloads, so nothing you have open or typed is lost).
 async function stopRematch(b){
@@ -242,7 +394,8 @@ async function openItem(el, focusList){
   el.scrollIntoView({block:'nearest', inline:'nearest'}); list.scrollLeft = 0;
   if (focusList) el.focus();
   history.replaceState(null, '', location.pathname + '?open=' + el.dataset.id);
-  pane.classList.remove('idle');
+  document.getElementById('stack').classList.add('detail');
+  document.getElementById('tb-title').textContent = el.querySelector('.it-title').textContent;
   pane.innerHTML = '<div class="empty">Loading…</div>';
   let j; try { j = await (await fetch('/api/card/' + el.dataset.id)).json() } catch { j = {html:'<div class="empty">Could not load this draft. Click it again.</div>'} }
   if (current !== el) return;
@@ -254,21 +407,25 @@ list.addEventListener('click', e => {
 });
 function move(d){ const all = items(); if (!all.length) return; let i = all.indexOf(current); i = i < 0 ? 0 : Math.max(0, Math.min(all.length - 1, i + d)); openItem(all[i], true) }
 function next(){ const all = items(); const i = all.indexOf(current); return all[i + 1] || all[i - 1] || null }
+function showRoot(){
+  document.getElementById('stack').classList.remove('detail');
+  document.getElementById('tb-title').textContent = list.dataset.manual === '1' ? 'Manual' : 'Review';
+  if (current) { current.classList.remove('active'); current.focus({ preventScroll: false }) }
+  current = null; history.replaceState(null, '', location.pathname); recount();
+}
 function markDone(text){
   const el = current; if (!el) return;
   const n = next();
   el.classList.add('gone'); el.classList.remove('active');
-  pane.classList.add('idle');
-  pane.innerHTML = '<div class="empty"><h3>' + text + '</h3><p>' + (n ? 'Press <kbd>j</kbd> or click the next post on the left.' : 'That was the last one here.') + '</p></div>';
-  current = null; history.replaceState(null, '', location.pathname);
-  if (n) openItem(n, true);
+  current = null; recount();
+  if (n) openItem(n, true); else { pane.innerHTML = '<div class="empty"><h3>' + text + '</h3><p>That was the last one.</p></div>'; setTimeout(showRoot, 900) }
 }
 async function approveCard(id, btn){
   const c = document.getElementById('app-' + id); const data = {};
   for (const el of c.querySelectorAll('[name]')) { if (el.name === 'body') { if (el.value !== el.defaultValue) data.body = el.value } else data[el.name] = el.value }
   btn.disabled = true;
   const j = await post('/api/approve/' + id, data);
-  if (j.ok) markDone('✓ Queued — it goes out in turn after the vendor rules are re-checked');
+  if (j.ok) markDone('Queued');
   else { c.querySelector('.msg').innerHTML = '<span class="err"></span>'; c.querySelector('.msg .err').textContent = j.error; btn.disabled = false }
 }
 async function cardAction(url, id, btn, doneText, confirmText){
@@ -281,12 +438,17 @@ async function cardAction(url, id, btn, doneText, confirmText){
 async function holdAction(id, decision, btn){
   btn.disabled = true; const j = await post('/api/hold/' + id, {decision});
   if (!j.ok) { alert(j.error); btn.disabled = false; return }
-  if (decision === 'to_draft') openItem(current); else markDone('✓ Done — back in the queue');
+  if (decision === 'to_draft') openItem(current); else markDone('Back in the queue');
 }
 document.addEventListener('change', e => {
   if (e.target.name !== 'resume_folder') return;
-  const kw = e.target.closest('.draft').querySelector('.kw');
-  if (kw) kw.innerHTML = '<i>Resume changed. If you have not edited the text, it is rewritten for this resume when you approve.</i>';
+  const d = e.target.closest('.draft'), kw = d.querySelector('.kw');
+  let info = null; try { info = JSON.parse(d.querySelector('.kw-data').textContent)[e.target.value] } catch {}
+  if (!kw || !info) return;
+  kw.innerHTML = info.html + '<br><i>Unless you edited the message, it is rewritten for this resume when you approve.</i>';
+  d.querySelector('.kw-count').textContent = info.found + ' found, ' + info.missing + ' missing';
+  d.querySelector('.kw-score').textContent = info.score + '% match';
+  kw.closest('details').open = true;
 });
 // filter
 function applyFilter(){
@@ -309,15 +471,16 @@ async function bulk(action, btn){
   const j = await post('/api/bulk', {action, ids});
   if (!j.ok) alert(j.error); location.reload();
 }
-function selectAllShown(on){ for (const it of items()) it.querySelector('input').checked = on; updateBulk() }
+function selectAllShown(on){ for (const it of items()) it.querySelector('input').checked = on; list.classList.toggle('selecting', on); updateBulk() }
+function toggleSelect(b){ const on = list.classList.toggle('selecting'); if (!on) selectAllShown(false); b.textContent = on ? 'Cancel' : 'Select' }
 // keyboard
 document.addEventListener('keydown', e => {
   const t = e.target; const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && t.type !== 'checkbox';
-  if (e.key === 'Escape') { if (typing) t.blur(); return }
+  if (e.key === 'Escape') { if (typing) t.blur(); else if (document.getElementById('stack').classList.contains('detail')) showRoot(); return }
   if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); move(1) }
   else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
-  else if (e.key === '/') { e.preventDefault(); filter.focus() }
+  else if (e.key === '/') { e.preventDefault(); if (document.getElementById('stack').classList.contains('detail')) showRoot(); filter.focus() }
   else if (e.key === 'x' && current) { const c = current.querySelector('input'); c.checked = !c.checked; updateBulk() }
   else if (e.key === 'a' && current) { const b = pane.querySelector('[data-act=approve]'); if (b) b.click() }
   else if (e.key === 's' && current) { const b = pane.querySelector('[data-act=skip]'); if (b) b.click() }
@@ -386,7 +549,7 @@ export function table(cols, rows) {
 }
 
 export function jobTitle(job) {
-  if (job.source === 'manual') return `<span class="badge" style="color:var(--accent)">MANUAL #${job.id ?? job.job_id}</span> ${esc(job.title)}`;
+  if (job.source === 'manual') return `<span class="tag soft">Manual #${job.id ?? job.job_id}</span> ${esc(job.title)}`;
   return `<a href="${esc(job.url)}" target="_blank" rel="noopener">${esc(job.title)}</a>`;
 }
 
@@ -454,54 +617,79 @@ function computeCounts() {
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
-const TABS = [['/', 'overview', 'Overview'], ['/review', 'review', 'Review'], ['/manual', 'manual', 'Manual'], ['/sent', 'sent', 'Sent history'], ['/scraped', 'scraped', 'Scraped'],
-  ['/vendors', 'vendors', 'Vendors & locks'], ['/logs', 'logs', 'Logs'], ['/health', 'health', 'Health']];
+const ICON = {
+  overview: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="9" width="4.5" height="4.5" rx="1.2"/>',
+  review: '<path d="M2 9.5 4 3.5h8l2 6V13a.8.8 0 0 1-.8.8H2.8A.8.8 0 0 1 2 13z"/><path d="M2 9.5h3.5l1 1.6h3l1-1.6H14"/>',
+  manual: '<path d="M9.5 2H4.3a.8.8 0 0 0-.8.8v10.4c0 .4.4.8.8.8h7.4c.4 0 .8-.4.8-.8V5z"/><path d="M9.5 2v3h3M8 7.5v4M6 9.5h4"/>',
+  sent: '<path d="M14 2 2.2 6.8a.3.3 0 0 0 0 .6L7 9l1.6 4.8a.3.3 0 0 0 .6 0z"/><path d="m7 9 3.2-3.2"/>',
+  vendors: '<circle cx="6" cy="5.5" r="2.3"/><path d="M1.8 13.5c.4-2.4 2-3.7 4.2-3.7s3.8 1.3 4.2 3.7"/><circle cx="11.6" cy="6" r="1.8"/><path d="M11.3 9.7c1.6.1 2.6 1.2 2.9 3"/>',
+  scraped: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.6" cy="4" r=".6" fill="currentColor"/><circle cx="2.6" cy="8" r=".6" fill="currentColor"/><circle cx="2.6" cy="12" r=".6" fill="currentColor"/>',
+  logs: '<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/>',
+  health: '<path d="M1.5 8.5h2.8L6 4.5l3 7.5 1.7-3.5h3.8"/>',
+  search: '<circle cx="6.8" cy="6.8" r="4.3"/><path d="m10 10 3.5 3.5"/>',
+  back: '<path d="M10 3 5 8l5 5"/>', fwd: '<path d="m6 3 5 5-5 5"/>',
+  send: '<path d="M14 2 2.2 6.8a.3.3 0 0 0 0 .6L7 9l1.6 4.8a.3.3 0 0 0 .6 0z"/>',
+  eye: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
+  refresh: '<path d="M13.5 8A5.5 5.5 0 1 1 11.8 4"/><path d="M13.5 2.5V5H11"/>',
+  mail: '<rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4"/>',
+  lock: '<rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+  block: '<circle cx="8" cy="8" r="6"/><path d="m3.8 12.2 8.4-8.4"/>',
+};
+const icon = (k) => `<svg class="i" viewBox="0 0 16 16">${ICON[k] ?? ''}</svg>`;
+// Sidebar, grouped the way System Settings groups its panes.
+const NAV = [
+  [['/', 'overview', 'Overview'], ['/review', 'review', 'Review'], ['/manual', 'manual', 'Manual']],
+  [['/sent', 'sent', 'Sent'], ['/vendors', 'vendors', 'Vendors']],
+  [['/scraped', 'scraped', 'Postings'], ['/logs', 'logs', 'Log'], ['/health', 'health', 'Status']],
+];
+const TITLES = { overview: 'Overview', review: 'Review', manual: 'Manual', sent: 'Sent', vendors: 'Vendors', scraped: 'Postings', logs: 'Log', health: 'Status', search: 'Search' };
+// The large header at the top of a pane (System Settings' icon + title + description card).
+export function hero(key, title, text) {
+  return `<div class="hero"><div class="hero-icon ${key === 'overview' ? 'accent' : ''}">${icon(key)}</div><h2>${esc(title)}</h2>${text ? `<p>${text}</p>` : ''}</div>`;
+}
 
 export function layout(active, body, { searchText = '', script = '', split = false } = {}) {
   const c = counts();
   const q = c.q;
   const watcherPaused = getState('watcher_paused', '0') === '1';
   const rm = rematchStatus();
-  const badge ={ review: c.newPostings + c.waiting + c.fix, manual: c.manual };
-  const tabs = TABS.map(([href, key, label]) => `<a href="${href}" class="${active === key ? 'on' : ''}">${label}${badge[key] ? `<b>${badge[key]}</b>` : ''}</a>`).join('');
-  const kpi = (label, inner, href, cls = '') => `<a class="kpi ${cls}" href="${href}"><span>${label}</span>${inner}</a>`;
-  const num = (v) => `<b data-n="${v}">${v}</b>`;
-  const kpis = [
-    kpi('Nvoids sends / cap', `${num(q.dailyCapSentToday)}<small>/</small><b>${q.cap}</b>`, '/sent'),
-    kpi('This week · total', `${num(c.week)}<small>·</small>${num(c.total)}`, '/sent'),
-    kpi('New postings · waiting', `${num(c.newPostings)}<small>·</small>${num(c.waiting)}`, '/review', c.newPostings ? 'hot' : ''),
-    kpi('Queued · held · failed', `${num(q.queued)}<small>·</small>${num(c.held)}<small>·</small>${num(c.failed)}`, '/', c.failed ? 'bad' : ''),
-    kpi(q.paused ? 'Sending paused' : q.dryRun ? 'Dry run — next' : 'Next send in', `<b data-countdown data-idle="${q.queued ? (q.paused ? 'paused' : 'cap reached') : 'queue empty'}">—</b>`, '/', q.paused ? 'bad' : ''),
-  ].join('');
+  const key = active || (searchText ? 'search' : '');
+  const badge = { review: c.newPostings + c.waiting + c.fix, manual: c.manual };
+  const nav = NAV.map(g => `<nav class="sb-group">${g.map(([href, k, label]) =>
+    `<a class="sb-item ${key === k ? 'on' : ''}" href="${href}">${icon(k)}<span>${label}</span>${badge[k] ? `<b>${badge[k]}</b>` : ''}</a>`).join('')}</nav>`).join('');
+  const status = `${watcherPaused ? 'Watcher paused' : 'Watching nvoids'} · ${q.paused ? 'sending paused' : q.dryRun ? 'dry run' : 'sending on'}`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RUNE</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Inter:wght@400;600&display=swap">
+<meta name="color-scheme" content="light dark">
 <style>${CSS}</style></head>
 <body data-next-at="${q.paused || q.dryRun ? 0 : (q.nextAt ?? 0)}" data-pending="${c.newPostings + c.waiting + c.fix}">
-<header>
- <span class="logo">RUNE</span>
- <nav class="tabs">${tabs}</nav>
- <div class="hright">
- <form class="search" action="/search" method="get"><input type="search" name="q" value="${esc(searchText)}" placeholder="Search email, name, phone, company, job #…" aria-label="Search"><button type="submit">Search</button></form>
- <span class="ctrl">
-  ${q.dryRun ? '<span class="badge bad" title="DRY_RUN=true in .env">DRY RUN</span>' : ''}
-  ${rm.running ? `<button class="small danger" data-rm-stop onclick="stopRematch(this)" title="Stop re-matching drafts"><span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span> · ■ Stop</button>` : ''}
-  <button class="small" onclick="simple('/api/pause-sending',{on:${!q.paused}},this)" title="Pause or resume sending">${q.paused ? '▶ Sending' : '⏸ Sending'}</button>
-  <button class="small" onclick="simple('/api/pause-watcher',{on:${!watcherPaused}},this)" title="Pause or resume checking nvoids">${watcherPaused ? '▶ Watcher' : '⏸ Watcher'}</button>
-  <button class="small" onclick="pollNow(this)" title="Check nvoids now">↻ Check</button>
-  <button class="small" onclick="testSend(this)" title="Send a test email to your own address">✉ Test</button>
- </span></div>
-</header>
-<div class="kpis">${kpis}</div>
-<div id="fresh" style="display:none;text-align:center;padding:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--head);letter-spacing:.08em" onclick="location.reload()">New drafts arrived — click to refresh</div>
-<main>${split ? `<div class="split">${body}</div>` : `<div class="page narrow">${body}</div>`}</main>
+<div class="window">
+ <aside class="sidebar">
+  <div class="titlebar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span></div>
+  <form class="sb-search" action="/search" method="get" role="search">${icon('search')}<input type="search" name="q" value="${esc(searchText)}" placeholder="Search" aria-label="Search emails, names, phones, companies, job numbers"></form>
+  <div class="sb-scroll">
+   <a class="sb-profile" href="/health"><span class="avatar">R</span><span><b>RUNE</b><small>${esc(status)}</small></span></a>
+   ${nav}
+  </div>
+ </aside>
+ <section class="content">
+  <div class="toolbar">
+   <div class="navbtns"><button type="button" onclick="navBack()" aria-label="Back">${icon('back')}</button><span></span><button type="button" onclick="history.forward()" aria-label="Forward">${icon('fwd')}</button></div>
+   <div class="tb-title" id="tb-title">${TITLES[key] ?? ''}</div>
+   <div class="tb-right">
+    ${rm.running ? `<span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button class="small" data-rm-stop onclick="stopRematch(this)">Stop</button>` : ''}
+    ${q.dryRun ? '<span class="tag soft" title="DRY_RUN=true in .env: nothing is really sent">Dry run</span>' : ''}
+    ${q.queued ? `<span>${q.paused ? 'Sending paused' : 'Next send'} <b data-countdown data-idle="${q.paused ? '' : 'at cap'}">—</b></span>` : ''}
+    <span id="scan-msg" class="scan-msg"></span>
+    <button class="small scan" onclick="pollNow(this)" title="Check nvoids for new postings now">${icon('refresh')}<span>Scan Now</span></button>
+   </div>
+  </div>
+  ${split ? `<div class="stack" id="stack">${body}</div>` : `<div class="scroller"><div class="pagewrap${key === 'scraped' || key === 'logs' || key === 'search' ? ' wide' : ''}">${body}</div></div>`}
+ </section>
+</div>
 <script>${CLIENT_JS}${script}</script></body></html>`;
 }
 
-// ── Review / Manual ───────────────────────────────────────────────────────────
-
-// Drafts created after id `after`, for the live Priority list (oldest first).
 export function freshItems(manual, after) {
   const rows = reviewRows(manual).filter(r => r.id > after && r.status === 'draft').reverse().slice(-50);
   return rows.map(r => { const kind = !manual && isPriority(r) ? 'hot' : 'std'; return { id: r.id, kind, html: itemHtml(r, kind) } });
@@ -510,61 +698,59 @@ export function freshItems(manual, after) {
 function itemHtml(r, kind) {
   const who = r.company || r.recruiter_name || r.to_email;
   const s = `${r.title} ${r.company ?? ''} ${r.recruiter_name ?? ''} ${r.to_email} folder ${r.resume_folder} #${r.job_id}`.toLowerCase();
-  const tag = r.status === 'held' ? 'held' : r.status === 'failed' ? 'failed' : '';
+  const tag = r.status === 'held' ? 'Held' : r.status === 'failed' ? 'Failed' : '';
   const posted = r.posted_utc ? Date.parse(r.posted_utc) || 0 : 0;
   const match = r.best_match_score ?? r.match_score;
   const resumeInfo = r.best_resume_folder && r.best_resume_folder !== r.resume_folder
-    ? `best f${r.best_resume_folder} · selected f${r.resume_folder} (${r.match_score ?? '?'}%)`
-    : `f${r.resume_folder}`;
-  return `<div class="item ${kind}" data-id="${r.id}" data-job="${r.job_id}" data-posted="${posted}" data-match="${match ?? ''}" data-s="${esc(s)}" tabindex="0">
+    ? `Best: ${r.best_resume_folder} · selected: ${r.resume_folder} (${r.match_score ?? '?'}%)` : `Resume: ${r.resume_folder}`;
+  return `<div class="item ${kind}" data-id="${r.id}" data-job="${r.job_id}" data-posted="${posted}" data-match="${match ?? ''}" data-s="${esc(s)}" tabindex="0" title="${esc(resumeInfo)}">
 <input type="checkbox" aria-label="Select">
-<div style="min-width:0"><div class="it-title">${esc(r.title)}</div><div class="it-sub">${tag ? `<span class="${tag === 'failed' ? 'bad' : 'warn'}">${tag}</span> · ` : ''}${esc(who)} · ${age(r)}</div></div>
-<div class="it-score">${match ?? '?'}%<small>${esc(resumeInfo)}</small></div></div>`;
+<div><div class="it-title">${esc(r.title)}</div><div class="it-sub">${tag ? `<span class="tagline">${tag}</span> · ` : ''}${esc(who)} · ${age(r)}</div></div>
+<div class="it-score">${match ?? '–'}%</div></div>`;
 }
 
 const LIST_LIMIT = 250;   // drafts rendered per group; 1000+ made the page heavy and slow to scroll
 export function reviewPage(manual) {
   const rows = reviewRows(manual);
   const k = reviewKinds(rows);
-  const group = (cls, label, list, kind) => list.length || kind === 'std' || (kind === 'hot' && !manual)
-    ? `<div class="group ${cls}">${label}<b>${list.length}</b></div>${list.slice(0, LIST_LIMIT).map(r => itemHtml(r, kind)).join('')}${list.length > LIST_LIMIT ? `<div class="meta" style="padding:10px 14px">Showing the newest ${LIST_LIMIT} of ${list.length}. Use the search box at the top to find older ones.</div>` : ''}` : '';
+  const group = (cls, label, list, kind) => `<div class="group ${cls}">${label}<b>${list.length}</b></div>${list.slice(0, LIST_LIMIT).map(r => itemHtml(r, kind)).join('')}${list.length > LIST_LIMIT ? `<div class="foot">Showing the newest ${LIST_LIMIT} of ${list.length}. Search to find older ones.</div>` : ''}`;
   const rm = rematchStatus();
   const total = rows.length;
-  const listbar = `<aside class="listbar">
- <div class="listtools">
-  ${manual ? `<button class="primary" onclick="location.href='/manual'">＋ Add a JD</button>` : ''}
-  <input id="filter" type="search" placeholder="Filter by title, company, email, folder…  ( / )">
-  <div class="rowx"><label style="margin:0;display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;font:12px var(--body)"><input type="checkbox" onchange="selectAllShown(this.checked)"> select all shown</label>
-   <span style="margin-left:auto"></span>
-   ${total ? `<button class="small" title="${rm.running ? 'A re-match is already running' : 'Re-score every draft here against your current resumes'}"${rm.running ? ' disabled' : ''} onclick="simple('/api/rematch-all',{source:'${manual ? 'manual' : 'nvoids'}'},this,'Re-score all ${total} drafts against your current resumes? Unedited drafts switch to the best resume.')">Re-match all</button>` : ''}</div>
-  <div class="bulk" id="bulk"><b id="bulk-n">0</b> selected <button class="small" onclick="bulk('rematch',this)">Re-match</button><button class="small" onclick="bulk('skip',this)">Skip</button></div>
-  ${rm.running ? `<div class="meta rm-row"><span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button class="small danger" data-rm-stop onclick="stopRematch(this)">■ Stop</button><a href="" data-rm-done style="display:none" onclick="location.reload();return false">↻ Refresh list</a></div>` : ''}
+  const root = `<div class="view-root">
+ <div class="pagewrap">
+ ${manual ? addJdForm() : hero('review', 'Review', total ? `${total} draft${total === 1 ? '' : 's'} waiting. Open one to check the email, then approve or skip it.` : 'New AI/ML postings appear here as RUNE finds them.')}
+ <div class="listtools"${total ? '' : ' style="display:none"'}>
+  <div class="filterbar"><input id="filter" type="search" placeholder="Filter" aria-label="Filter drafts (press /)"><span class="sp"></span>
+   <button class="small" onclick="toggleSelect(this)">Select</button>
+   ${total ? `<button class="small" ${rm.running ? 'disabled' : ''} onclick="simple('/api/rematch-all',{source:'${manual ? 'manual' : 'nvoids'}'},this,'Re-score all ${total} drafts against your current resumes? Unedited drafts switch to the best resume.')">Re-match All</button>` : ''}</div>
+  <div class="bulk" id="bulk"><span><b id="bulk-n">0</b> selected</span><span class="sp"></span><button class="small" onclick="selectAllShown(true)">Select All</button><button class="small" onclick="bulk('rematch',this)">Re-match</button><button class="small" onclick="bulk('skip',this)">Skip</button><button class="small plain" onclick="selectAllShown(false)">Done</button></div>
+  ${rm.running ? `<div class="rm-row"><span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button class="small danger" data-rm-stop onclick="stopRematch(this)">Stop</button><a href="" data-rm-done style="display:none" onclick="location.reload();return false">Refresh</a></div>` : ''}
  </div>
  <div class="list" id="list" data-manual="${manual ? 1 : 0}" data-prio-ms="${config.priorityWindowMinutes * 60_000}">
-  ${group('hot', 'Priority · under ' + config.priorityWindowMinutes + ' min', k.prio, 'hot')}
-  ${group('fix', 'Needs fixing', k.fix, 'fix')}
-  ${group('', manual ? 'Manual drafts' : 'Standard', k.std, 'std')}
+  ${manual ? '' : group('hot', 'New in the last ' + config.priorityWindowMinutes + ' minutes', k.prio, 'hot')}
+  ${group('fix', 'Needs attention', k.fix, 'fix')}
+  ${group('', manual ? 'Your drafts' : 'Ready to review', k.std, 'std')}
  </div>
-</aside>`;
-  const emptyPane = manual ? addJdForm() : `<div class="empty"><h3>Pick a post on the left</h3>
-<p>Priority postings are kept in their own group and sorted by best resume match, then newest. Standard postings follow, also sorted by match; needs-fixing items stay separate.</p>
-<p><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> approve · <kbd>s</kbd> skip · <kbd>r</kbd> re-match · <kbd>x</kbd> select · <kbd>/</kbd> filter</p></div>`;
-  return listbar + `<section class="pane${manual ? '' : ' idle'}" id="pane">${emptyPane}</section>`;
+ ${total ? '<p class="foot" style="text-align:center;margin-top:12px"><kbd>j</kbd> <kbd>k</kbd> next and previous · <kbd>a</kbd> approve · <kbd>s</kbd> skip · <kbd>r</kbd> re-match · <kbd>esc</kbd> back</p>' : ''}
+ </div>
+</div>`;
+  return root + `<section class="pane" id="pane"></section>`;
 }
+
 export const REVIEW_SCRIPT = REVIEW_JS;
 
 function addJdForm() {
-  return `<div class="draft"><div class="draft-head"><h3>Add a job description</h3>
-<div class="meta">Paste a JD from anywhere (LinkedIn, WhatsApp, an email). RUNE reads the recruiter, role and location, picks your best resume, writes the email, and adds it to this list as #1001, #1002, …</div></div>
-<div class="draft-body" style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,1fr);gap:16px">
- <div style="display:flex;flex-direction:column;min-height:0"><label>Job description (required)</label>
-  <textarea id="m_jd" style="flex:1;min-height:260px" placeholder="Paste the whole JD here, including the recruiter's signature / email"></textarea></div>
- <div><label>Recruiter email</label><input id="m_to" placeholder="read from the JD">
-  <label>Job title</label><input id="m_title" placeholder="read from the JD">
-  <label>Location</label><input id="m_loc" placeholder="read from the JD">
-  <p class="meta" style="margin-top:14px">Leave these empty and RUNE fills them from the JD. Things that would skip an nvoids post (W2-only, low match) show as warnings instead, since you chose this job.</p></div>
+  return `${hero('manual', 'Manual', 'Paste a job description from anywhere. RUNE reads the recruiter, role and location, picks your best resume and writes the email.')}
+<div class="section">Job description</div>
+<div class="grp text"><textarea id="m_jd" style="min-height:200px" placeholder="Paste the whole posting, including the recruiter’s signature and email"></textarea></div>
+<div class="section">Details <span class="aside">Optional</span></div>
+<div class="grp">
+ <div class="row"><label for="m_to">Recruiter email</label><input id="m_to" placeholder="Read from the JD"></div>
+ <div class="row"><label for="m_title">Role</label><input id="m_title" placeholder="Read from the JD"></div>
+ <div class="row"><label for="m_loc">Location</label><input id="m_loc" placeholder="Read from the JD"></div>
 </div>
-<div class="draft-actions"><button class="primary" onclick="addJd(this)">Create draft</button><span class="msg" id="m_msg"></span></div></div>
+<div class="btnrow"><span class="msg meta" id="m_msg"></span><span class="sp"></span><button class="primary" onclick="addJd(this)">Create Draft</button></div>
+<p class="foot">Rules that would skip an nvoids posting (W2-only, low match) show as warnings instead, since you chose this job.</p>
 <script>
 async function addJd(b){
   const msg = document.getElementById('m_msg');
@@ -587,7 +773,7 @@ function formulaLine(r) {
   if (f.crit !== 1) bits.push(`custom ×${f.crit}`);
   if (f.res !== 1) bits.push(`wrong-lane ×${f.res} (R ${f.R}%${f.family ? `, ${f.family} resume` : ''})`);
   if (f.def !== 1) bits.push(`seniority ×${f.def}`);
-  return `<span title="final = (d/100) × Base × DmgType × Crit × Res × Def — settings in resume-lanes.json">Formula: ${esc(bits.join(' × '))} = <b>${r.score}</b></span><br>`;
+  return `<span title="final = (d/100) × Base × DmgType × Crit × Res × Def — settings in resume-lanes.json">Score: ${esc(bits.join(' × '))} = <b>${r.score}</b></span><br>`;
 }
 
 // The draft shown in the work area (fetched by the list via /api/card/:id).
@@ -597,52 +783,77 @@ export function draftView(app, job) {
   const chosen = ranked.find(r => r.folder === app.resume_folder) ?? ranked[0] ?? { matched: [], missing: [] };
   const lock = lockFor(app.to_email);
   const held = app.status === 'held';
-  const opts = ranked.map(r => `<option value="${esc(r.folder)}" ${r.folder === app.resume_folder ? 'selected' : ''} ${lock && r.folder !== lock.resume_folder ? 'disabled' : ''}>${esc(r.name ?? resumeLabel(r.folder))} — ${r.score}% match${r === ranked[0] ? ' (best)' : ''}${lock && r.folder === lock.resume_folder ? ' (LOCKED)' : ''}</option>`).join('');
+  const opts = ranked.map(r => `<option value="${esc(r.folder)}" ${r.folder === app.resume_folder ? 'selected' : ''} ${lock && r.folder !== lock.resume_folder ? 'disabled' : ''}>${esc(r.name ?? resumeLabel(r.folder))} (${r.score}%${r === ranked[0] ? ', best' : ''}${lock && r.folder === lock.resume_folder ? ', locked' : ''})</option>`).join('');
   const holdButtons = {
-    same_day: [['use_today', `Use today's resume (folder ${app.todays_folder})`], ['tomorrow', 'Send tomorrow']],
-    lock_edited: [['use_lock', 'Switch to locked resume']], lock_missing: [['retry', 'Retry']], job_details: [['to_draft', 'Edit the email']],
-    lock_low_fit: [['retry', 'Retry']], repost: [['send_anyway', 'Not a repost — send anyway']], weekly_cap: [['next_week', 'Send next week']],
-    dry_run: [['retry', 'Queue again']], blacklist: [], same_jd_edited: [['to_draft', 'Back to draft (switch the resume)']],
+    same_day: [['use_today', `Use Today’s Resume`], ['tomorrow', 'Send Tomorrow']],
+    lock_edited: [['use_lock', 'Switch to Locked Resume']], lock_missing: [['retry', 'Retry']], job_details: [['to_draft', 'Edit the Email']],
+    lock_low_fit: [['retry', 'Retry']], repost: [['send_anyway', 'Send Anyway']], weekly_cap: [['next_week', 'Send Next Week']],
+    dry_run: [['retry', 'Queue Again']], blacklist: [], same_jd_edited: [['to_draft', 'Back to Draft']],
   }[app.hold_kind] ?? [['retry', 'Retry']];
   const dis = held ? 'disabled' : '';
+  const warnings = draftWarnings(app, job);
+  const matched = chosen.matched ?? [], missing = chosen.missing ?? [];
+  const cc = app.cc_emails ?? ccFor(app.to_email).join(', ');
+  const edited = app.body !== app.auto_body;
+  // Match details for EVERY resume, so switching the Resume menu updates them instantly (no reload, no request).
+  const kwHtml = (r) => `${r.why ? `<i>${esc(r.why)}</i><br>` : ''}${formulaLine(r)}In this resume: ${(r.matched ?? []).map(k => `<span class="m">${esc(k)}</span>`).join('') || '–'}${r.related?.length ? `<br>Partial credit: ${r.related.map(esc).join(', ')}` : ''}<br>
+   Not found: ${(r.missing ?? []).map(k => `<span>${esc(k)}</span>`).join('') || '–'}`;
+  const kwData = Object.fromEntries(ranked.map(r => [r.folder, { html: kwHtml(r), found: (r.matched ?? []).length, missing: (r.missing ?? []).length, score: r.score }]));
+  const skip = `<button data-act="skip" onclick="cardAction('/api/skip/${app.id}',${app.id},this,'Skipped','Skip this job?')" title="Skip (s)">Skip</button>`;
+  const actions = held
+    ? [skip, '<span class="msg"></span><span class="sp"></span>', ...holdButtons.map(([d, label], i, all) => `<button class="${i === all.length - 1 ? 'primary' : ''}" onclick="holdAction(${app.id},'${d}',this)">${esc(label)}</button>`)]
+    : [skip, `<button data-act="rematch" onclick="cardAction('/api/rematch/${app.id}',${app.id},this,'')" title="Re-match (r)">Re-match</button>`,
+       '<span class="msg"></span><span class="sp"></span>', `<button class="primary" data-act="approve" onclick="approveCard(${app.id},this)" title="Approve and queue (a)">Approve</button>`];
   return `<div class="draft" id="app-${app.id}">
-<div class="draft-head">
- <h3>${priority ? '<span class="badge hot">NEW POSTING</span> ' : ''}${jobTitle(job)}</h3>
- <div class="meta">${jobLine(job)}</div>
- ${held ? `<div class="err">HELD: ${esc(app.hold_reason)}</div>` : ''}
- ${app.status === 'failed' ? `<div class="err">Last send failed: ${esc(app.error)}</div>` : ''}
- ${draftWarnings(app, job).map(w => `<div class="warn">⚠ ${esc(w)}</div>`).join('')}
-</div>
-<div class="draft-body">
- <div class="cols">
-  <div><label>Resume to attach</label><select name="resume_folder" ${dis}>${opts}</select>
-   <div class="kw">${chosen.why ? `<i>Why: ${esc(chosen.why)}</i><br>` : ''}${formulaLine(chosen)}In this resume: ${(chosen.matched ?? []).map(k => `<span class="m">${esc(k)}</span>`).join('') || '—'}${chosen.related?.length ? `<br>Partial credit: ${chosen.related.map(esc).join(', ')}` : ''}<br>
-   Not found: ${(chosen.missing ?? []).map(k => `<span>${esc(k)}</span>`).join('') || '—'}</div></div>
-  <div><label>To</label><input name="to_email" value="${esc(app.to_email)}" ${dis}>
-   <label>CC</label><input name="cc_emails" value="${esc(app.cc_emails ?? ccFor(app.to_email).join(', '))}" placeholder="name@example.com, another@example.com" ${dis}>
-   <label>Subject</label><input name="subject" value="${esc(app.subject)}" ${dis}></div>
+<div class="draft-body"><div class="pagewrap">
+ <div class="draft-head">
+  <div class="kicker">${priority ? '<span class="tag accent">New</span>' : ''}<span class="kw-score">${app.match_score ?? chosen.score ?? '–'}% match</span></div>
+  <h3>${jobTitle(job)}</h3>
+  <div class="meta">${jobLine(job)}</div>
+  ${held ? `<div class="callout"><div><b>Held.</b> ${esc(app.hold_reason)}</div></div>` : ''}
+  ${app.status === 'failed' ? `<div class="callout"><div><b>Last send failed.</b> ${esc(app.error)}</div></div>` : ''}
  </div>
- <label>Email body${app.body !== app.auto_body ? ' (edited by you)' : ''}</label><textarea name="body" ${dis}>${esc(app.body)}</textarea>
- <div class="jd"><h4>Job description</h4><pre>${esc(job.jd_text)}</pre></div>
-</div>
-<div class="draft-actions">
- ${held
-    ? holdButtons.map(([d, label], i) => `<button class="${i === 0 ? 'primary' : ''}" onclick="holdAction(${app.id},'${d}',this)">${esc(label)}</button>`).join('')
-    : `<button class="primary" data-act="approve" onclick="approveCard(${app.id},this)">Approve → queue <kbd>a</kbd></button>
-       <button data-act="rematch" onclick="cardAction('/api/rematch/${app.id}',${app.id},this,'')">Re-match <kbd>r</kbd></button>`}
- <button data-act="skip" onclick="cardAction('/api/skip/${app.id}',${app.id},this,'Skipped','Skip this job?')">Skip <kbd>s</kbd></button>
- <span class="msg"></span>
-</div></div>`;
+ ${warnings.length ? `<div class="grp"><details class="disc"><summary class="row"><span class="dot"></span><span class="lbl"><span>${warnings.length === 1 ? '1 warning' : `${warnings.length} warnings`}</span></span><span class="chev"></span></summary><div class="disc-body warnlist">${warnings.map(w => `<div>${esc(w)}</div>`).join('')}</div></details></div>` : ''}
+ <div class="section">Email</div>
+ <div class="grp">
+  <div class="row"><label>Resume</label><span class="sp" style="flex:1"></span><span class="popup"><select name="resume_folder" ${dis}>${opts}</select></span></div>
+  <div class="row"><label>To</label><input name="to_email" value="${esc(app.to_email)}" ${dis}></div>
+  <div class="row"><label>Cc</label><input name="cc_emails" value="${esc(cc)}" placeholder="None" ${dis}></div>
+  <div class="row"><label>Subject</label><input name="subject" value="${esc(app.subject)}" ${dis}></div>
+ </div>
+ <div class="section">Message${edited ? '<span class="aside">Edited by you</span>' : ''}</div>
+ <div class="grp text"><textarea name="body" ${dis}>${esc(app.body)}</textarea></div>
+ <div class="grp" style="margin-top:20px">
+  <details class="disc"><summary class="row"><span class="lbl"><span>Match details</span></span><span class="val kw-count">${matched.length} found, ${missing.length} missing</span><span class="chev"></span></summary>
+   <div class="disc-body kw">${kwHtml(chosen)}</div></details>
+  <script type="application/json" class="kw-data">${JSON.stringify(kwData).replace(/</g, '\\u003c')}</script>
+  <details class="disc jd"><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details>
+ </div>
+</div></div>
+<div class="draft-actions">${actions.join('')}</div></div>`;
 }
 
 // Read-only view of a sent / queued / skipped email (search results open these).
 export function emailView(app, job) {
-  return `<div class="panel"><h3>${esc(app.status)}</h3><div style="font-size:15px;margin-bottom:6px">${jobTitle(job)}</div><div class="meta">${jobLine(job)}</div>
-<p>${app.sent_at ? `Sent ${esc(app.sent_at)} · ` : ''}${app.approved_at ? `approved ${esc(app.approved_at)} · ` : ''}to ${esc(app.to_email)} · resume ${esc(resumeLabel(app.resume_folder))} (${app.match_score ?? '?'}%)</p>
-${app.error ? `<div class="err">${esc(app.error)}</div>` : ''}
-${app.cc_emails ? `<label>CC</label><pre>${esc(app.cc_emails.split(',').join(', '))}</pre>` : ''}<label>Subject</label><pre>${esc(app.subject)}</pre><label>Email body</label><pre>${esc(app.body)}</pre>
-<div class="jd"><h4>Job description</h4><pre>${esc(job.jd_text)}</pre></div>
-${app.status === 'queued' ? `<div style="margin-top:12px"><button onclick="simple('/api/cancel/${app.id}',{},this)">Pull back from the queue</button></div>` : ''}</div>`;
+  const when = [app.sent_at && `Sent ${esc(app.sent_at)}`, app.approved_at && `approved ${esc(app.approved_at)}`].filter(Boolean).join(' · ');
+  const st = app.status[0].toUpperCase() + app.status.slice(1);
+  return `<div class="draft-head">
+ <div class="kicker"><span class="tag ${app.status === 'failed' ? 'accent' : ''}">${esc(st)}</span>${when ? `<span>${when}</span>` : ''}</div>
+ <h3>${jobTitle(job)}</h3>
+ <div class="meta">${jobLine(job)}</div>
+ ${app.error ? `<div class="callout"><div>${esc(app.error)}</div></div>` : ''}
+</div>
+<div class="section">Email</div>
+<div class="grp">
+ <div class="row"><span class="lbl"><span>To</span></span><span class="val">${esc(app.to_email)}</span></div>
+ ${app.cc_emails ? `<div class="row"><span class="lbl"><span>Cc</span></span><span class="val">${esc(app.cc_emails.split(',').join(', '))}</span></div>` : ''}
+ <div class="row"><span class="lbl"><span>Subject</span></span><span class="val ink" style="white-space:normal;text-align:right;max-width:70%">${esc(app.subject)}</span></div>
+ <div class="row"><span class="lbl"><span>Resume</span></span><span class="val">${esc(resumeLabel(app.resume_folder))} · ${app.match_score ?? '?'}%</span></div>
+</div>
+<div class="section">Message</div>
+<div class="grp text"><pre>${esc(app.body)}</pre></div>
+<div class="grp" style="margin-top:20px"><details class="disc"><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details></div>
+${app.status === 'queued' ? `<div class="btnrow"><button onclick="simple('/api/cancel/${app.id}',{},this)">Pull Back from Queue</button></div>` : ''}`;
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────
@@ -661,41 +872,53 @@ export function overviewPage() {
   };
   const capTomorrow = dailyCap(new Date(Date.now() + 86_400_000));
   const lastPoll = getState('last_poll_at', 'never'), pollOk = getState('last_poll_ok', '1') === '1';
+  const watcherPaused = getState('watcher_paused', '0') === '1';
+  const toReview = c.newPostings + c.waiting + c.fix;
   const editor = nextApp ? `<div id="q-editor">
-   <div class="meta" id="q-title">${esc(jobs.get(nextApp.job_id)?.title ?? '')} · ${esc(resumeLabel(nextApp.resume_folder))}</div>
-   <label>To</label><input id="q-to" value="${esc(nextApp.to_email)}">
-   <label>CC</label><input id="q-cc" value="${esc(nextApp.cc_emails ?? ccFor(nextApp.to_email).join(', '))}" placeholder="name@example.com, another@example.com">
-   <label>Subject</label><input id="q-subject" value="${esc(nextApp.subject)}">
-   <label>Body</label><textarea id="q-body" style="min-height:170px">${esc(nextApp.body)}</textarea>
-   <div style="display:flex;gap:8px;margin-top:10px;align-items:center"><button class="primary" onclick="saveQueued(this)">Save changes</button>
-    <button onclick="simple('/api/cancel/'+QID,{},this,'Pull this email back to drafts?')">Pull back</button><span class="meta" id="q-msg"></span></div>
-   <input type="hidden" id="q-id" value="${nextApp.id}"></div>` : `<p class="meta">Nothing queued. Approve drafts on the <a href="/review">Review</a> tab.</p>`;
+ <div class="section">Before it sends <span class="aside" id="q-title">${esc(jobs.get(nextApp.job_id)?.title ?? '')}</span></div>
+ <div class="grp">
+  <div class="row"><label>To</label><input id="q-to" value="${esc(nextApp.to_email)}"></div>
+  <div class="row"><label>Cc</label><input id="q-cc" value="${esc(nextApp.cc_emails ?? ccFor(nextApp.to_email).join(', '))}" placeholder="None"></div>
+  <div class="row"><label>Subject</label><input id="q-subject" value="${esc(nextApp.subject)}"></div>
+ </div>
+ <div class="grp text"><textarea id="q-body" style="min-height:200px">${esc(nextApp.body)}</textarea></div>
+ <div class="btnrow"><button onclick="simple('/api/cancel/'+QID,{},this,'Pull this email back to drafts?')">Pull Back</button><span class="meta" id="q-msg"></span><span class="sp"></span><button class="primary" onclick="saveQueued(this)">Save</button></div>
+ <input type="hidden" id="q-id" value="${nextApp.id}"></div>` : '';
   const upNext = queue.slice(0, 40).map((r, i) => {
     const j = jobs.get(r.job_id) ?? {};
-    return `<tr><td>${i + 1}</td><td>${r.priority ? '<span class="badge hot">NEW</span> ' : ''}${esc(j.title ?? '')}<div class="meta">${esc(r.to_email)} · ${esc(resumeLabel(r.resume_folder))}</div></td>
-     <td><button class="small" onclick="loadQueued(${r.id})">Edit</button></td></tr>`;
+    return `<div class="row click" onclick="loadQueued(${r.id})"><span class="val" style="width:18px;text-align:right">${i + 1}</span><span class="lbl"><span>${r.priority ? '<span class="tag accent" style="margin-right:6px">New</span>' : ''}${esc(j.title ?? '')}</span><span class="sub one">${esc(r.to_email)} · ${esc(resumeLabel(r.resume_folder))}</span></span><span class="chev"></span></div>`;
   }).join('');
   const alerts = [
-    c.failed ? `<a href="/review" class="bad">✗ ${c.failed} failed send(s) — open Review → Needs fixing</a>` : '',
-    c.held ? `<a href="/review" class="warn">⚠ ${c.held} held by a vendor rule</a>` : '',
-    c.newPostings ? `<a href="/review">★ ${c.newPostings} new posting(s) waiting</a>` : '',
-    !emailConfigured() ? `<a href="/health" class="bad">✗ Gmail not configured</a>` : '',
-    !pollOk ? `<a href="/logs" class="bad">✗ Last nvoids check failed</a>` : '',
-    c.q.paused ? `<span class="warn">⏸ Sending is paused</span>` : '',
-    c.q.dryRun ? `<span class="warn">DRY RUN is on — nothing is really sent</span>` : '',
+    c.failed ? ['/review', '', `${c.failed} failed send${c.failed > 1 ? 's' : ''}`] : null,
+    c.held ? ['/review', 'ring', `${c.held} held by a vendor rule`] : null,
+    c.newPostings ? ['/review', '', `${c.newPostings} new posting${c.newPostings > 1 ? 's' : ''} to review`] : null,
+    !emailConfigured() ? ['/health', '', 'Gmail isn’t connected'] : null,
+    !pollOk ? ['/logs', '', 'The last nvoids check failed'] : null,
+    c.q.dryRun ? ['/health', 'ring', 'Dry run is on, so nothing is really sent'] : null,
   ].filter(Boolean);
-  const page = `<div class="grid g3 fill" style="grid-template-rows:auto minmax(0,1fr)">
- <div class="panel"><h3>Next send</h3><div class="big" data-countdown data-idle="${c.q.queued ? (c.q.paused ? 'paused' : 'waiting') : '—'}">—</div>
-  <div class="meta">${c.q.queued} in the queue · total sent today ${c.q.sentToday} · nvoids cap ${c.q.dailyCapSentToday}/${c.q.cap} · tomorrow's cap ${capTomorrow}</div>
-  <div class="meta">Emails still queued at midnight expire unsent (old postings).</div></div>
- <div class="panel"><h3>Needs you</h3>${alerts.length ? alerts.map(a => `<div style="padding:3px 0">${a}</div>`).join('') : '<p class="meta">All clear.</p>'}</div>
- <div class="panel"><h3>Today</h3>
-  <div class="cols" style="gap:6px 14px"><div>Scraped <b>${today.scraped}</b></div><div>Drafted <b>${today.drafted}</b></div>
-  <div>Sent <b>${c.q.sentToday}</b></div><div>Skipped <b>${today.skipped}</b></div><div>Expired <b>${today.expired}</b></div>
-  <div>Last check <b class="${pollOk ? 'ok' : 'bad'}">${esc(String(lastPoll).slice(11, 16) || '—')}</b></div></div></div>
- <div class="panel" style="grid-column:span 2;min-height:0"><h3>Edit before it sends</h3><div class="scroll">${editor}</div></div>
- <div class="panel" style="min-height:0"><h3>Up next (${queue.length})</h3><div class="scroll"><table><tbody>${upNext || '<tr><td class="meta">Queue is empty.</td></tr>'}</tbody></table></div></div>
+  const page = `${hero('overview', 'RUNE', 'Watches nvoids for AI/ML roles, drafts an email with your best resume, and sends only what you approve.')}
+${alerts.length ? `<div class="grp">${alerts.map(([href, cls, t]) => `<a class="row" href="${href}"><span class="dot ${cls}"></span><span class="lbl"><span>${t}</span></span><span class="chev"></span></a>`).join('')}</div>` : ''}
+<div class="section">Controls</div>
+<div class="grp">
+ <div class="row"><span class="lbl"><span>Send approved emails</span><span class="sub">${c.q.paused ? 'Paused. Approved emails wait in the queue.' : 'One at a time, paced like a person.'}</span></span>
+  <label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="simple('/api/pause-sending',{on:!this.checked},this)" aria-label="Send approved emails"><span></span></label></div>
+ <div class="row"><span class="lbl"><span>Watch nvoids</span><span class="sub">${watcherPaused ? 'Paused. No new postings are read.' : `Checks every ${config.pollSeconds} seconds.`}</span></span>
+  <label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="simple('/api/pause-watcher',{on:!this.checked},this)" aria-label="Watch nvoids"><span></span></label></div>
+ <div class="row"><span class="lbl"><span>Scan for new postings</span><span class="sub">Last scan ${esc(String(lastPoll).slice(11, 16) || '–')}${pollOk ? '' : ', failed'}</span></span><button onclick="pollNow(this)"><span>Scan Now</span></button></div>
+ <div class="row"><span class="lbl"><span>Test email</span><span class="sub">Sends a sample to your own address.</span></span><button onclick="testSend(this)">Send Test…</button></div>
 </div>
+<div class="section">Today</div>
+<div class="grp">
+ <div class="row"><span class="lbl"><span>Next send</span></span><span class="val ink" data-countdown data-idle="${c.q.queued ? (c.q.paused ? 'Paused' : 'Waiting') : 'Nothing queued'}">–</span></div>
+ <a class="row" href="/sent"><span class="lbl"><span>Sent today</span></span><span class="val">${c.q.dailyCapSentToday} of ${c.q.cap}</span><span class="chev"></span></a>
+ <a class="row" href="/sent"><span class="lbl"><span>This week</span></span><span class="val">${c.week} · ${c.total} all time</span><span class="chev"></span></a>
+ <a class="row" href="/review"><span class="lbl"><span>Waiting for review</span></span><span class="val">${toReview}</span><span class="chev"></span></a>
+ <a class="row" href="/scraped"><span class="lbl"><span>Postings read</span></span><span class="val">${today.scraped} read · ${today.drafted} drafted · ${today.skipped} skipped</span><span class="chev"></span></a>
+</div>
+<div class="section">Up next <span class="aside">${queue.length} queued</span></div>
+<div class="grp">${upNext || '<div class="empty-row">Nothing queued. Approved drafts wait here before they go out.</div>'}</div>
+${editor}
+<p class="foot">Emails still queued at midnight expire unsent. Tomorrow’s cap is ${capTomorrow}.</p>
 <script>
 let QID = Number(document.getElementById('q-id')?.value || 0);
 async function loadQueued(id){
@@ -719,15 +942,13 @@ async function saveQueued(b){
 export function sentPage() {
   const rows = db.prepare(`SELECT a.*, j.title, j.url, j.recruiter_name, j.company, j.source FROM applications a JOIN jobs j ON j.id = a.job_id
                            WHERE a.status IN ('sent','failed','skipped','sending','expired') ORDER BY COALESCE(a.sent_at, a.updated_at) DESC LIMIT 2000`).all();
-  return `<div class="panel fill"><h3>Sent history (${rows.length})</h3>
-<div style="display:flex;gap:10px;margin-bottom:10px;align-items:center"><input id="sf" type="search" placeholder="Filter…" style="max-width:320px" oninput="for(const tr of document.querySelectorAll('#st tbody tr'))tr.style.display=tr.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
- <a href="/export/applications.csv">Download CSV</a><a href="/history">Sent_History.md</a></div>
-<div class="scroll" id="st">${table([
-    ['When', r => esc(r.sent_at ?? r.updated_at ?? '')], ['Status', r => `<b class="${r.status === 'sent' ? 'ok' : r.status === 'failed' ? 'bad' : 'meta'}">${esc(r.status)}</b>${r.error ? `<div class="meta">${esc(r.error)}</div>` : ''}`],
-    ['Job', r => `${jobTitle(r)}<div class="meta">#${r.job_id}</div>`], ['Recruiter', r => `${esc(r.recruiter_name ?? '')}<br>${esc(r.to_email)}`],
-    ['Resume', r => `${esc(resumeLabel(r.resume_folder))} <span class="meta">(${r.match_score ?? '?'}%${r.locked ? ', locked' : ''})</span>`],
-    ['', r => `<a href="/app/${r.id}">open</a>`],
-  ], rows)}</div></div>`;
+  const cap = (x) => x ? x[0].toUpperCase() + x.slice(1) : '';
+  return `${hero('sent', 'Sent', 'Every email that went out, failed, expired or was skipped.')}
+<div class="filterbar"><input type="search" placeholder="Filter ${rows.length} emails" oninput="for(const r of document.querySelectorAll('#st .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
+ <span class="sp"></span><a class="quiet" href="/history">Sent_History.md</a><a class="quiet" href="/export/applications.csv">Export CSV</a></div>
+<div class="grp" id="st">${rows.map(r => `<a class="row tall" href="/app/${r.id}"><span class="lbl"><span>${esc(r.title ?? '')}</span>
+  <span class="sub one">${esc(r.recruiter_name ? `${r.recruiter_name} · ` : '')}${esc(r.to_email)} · ${esc(resumeLabel(r.resume_folder))} ${r.match_score ?? '?'}%${r.locked ? ' · locked' : ''}</span>${r.error ? `<span class="sub" style="color:var(--bad)">${esc(r.error)}</span>` : ''}</span>
+  <span class="val" style="text-align:right">${r.status === 'failed' ? `<span style="color:var(--bad)">${cap(r.status)}</span>` : cap(r.status)}<span class="sub">${esc(String(r.sent_at ?? r.updated_at ?? '').slice(0, 16))}</span></span><span class="chev"></span></a>`).join('') || '<div class="empty-row">Nothing has been sent yet.</div>'}</div>`;
 }
 
 // ── Vendors & locks ───────────────────────────────────────────────────────────
@@ -749,45 +970,44 @@ export function vendorsPage() {
   const opts = (sel) => `<option value="">— none —</option>` + Object.entries(VENDOR_STATUSES).map(([k, v]) => `<option value="${k}" ${sel === k ? 'selected' : ''}>${v}</option>`).join('');
   const withStatus = [...statuses.values()];
   const tally = Object.entries(VENDOR_STATUSES).map(([k, v]) => [v, withStatus.filter(s => s.status === k).length]).filter(([, c]) => c);
-  return `<div class="grid fill" style="grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr)">
-<div class="panel" style="min-height:0"><h3>Vendors (${vendors.length})</h3>
- <div class="meta" style="margin-bottom:8px">${tally.length ? tally.map(([v, c]) => `${v}: <b>${c}</b>`).join(' · ') : 'Mark a vendor as RTR, Submitted, Interview, Offer… — they stay at the top.'}</div>
- <input type="search" placeholder="Filter vendors…" style="max-width:300px;margin-bottom:8px" oninput="for(const tr of document.querySelectorAll('#vt tbody tr'))tr.style.display=tr.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
- <div class="scroll" id="vt">${table([
-    ['Vendor', v => `<b>${esc(v.addr)}</b><div class="meta">${v.sends} sent${v.last_sent ? ` · last ${esc(v.last_sent.slice(0, 10))}` : ''}${v.folders ? ` · folders ${esc(v.folders)}` : ''} · ${weekly.get(v.addr) ?? 0} this week</div>`],
-    ['Status', v => { const s = statuses.get(v.addr);
-      return `${s ? `<span class="pill ${s.status}">${esc(VENDOR_STATUSES[s.status])}</span> <span class="meta">${esc(s.on_date ?? '')}</span>${s.note ? `<div class="meta">${esc(s.note)}</div>` : ''}` : ''}
-       <div style="display:flex;gap:4px;margin-top:4px" data-addr="${esc(v.addr)}"><select style="width:auto;padding:3px 6px">${opts(s?.status)}</select>
-       <input type="date" value="${esc(s?.on_date ?? '')}" style="width:auto;padding:3px 6px"><input placeholder="note" value="${esc(s?.note ?? '')}" style="padding:3px 6px">
-       <button class="small" onclick="vsave(this)">Save</button></div>` }],
-    ['Lock', v => { const l = lockOf(v.addr); return l ? `${esc(resumeLabel(l.resume_folder))}<div class="meta">${esc(lockLabel(l))}</div>` : `<button class="small" onclick="lockPrefill('${esc(parseVendor(v.addr)?.domain ?? '')}')">Lock…</button>` }],
-  ], vendors)}</div></div>
-<div class="grid" style="grid-template-rows:auto auto minmax(0,1fr);min-height:0">
- <div class="panel"><h3>Blacklist (${black.length})</h3>
-  <div class="meta">Never email these. A domain (cdf.com), an address, or a company name as it appears in posts. Their postings are skipped and open drafts are skipped now.</div>
-  <div style="display:flex;gap:6px;margin-top:8px"><input id="bl-term" placeholder="tanishasystems.com or Tanisha Systems"><button class="primary" onclick="bladd(this)">Add</button></div>
-  <div style="margin-top:8px">${black.map(b => `<span class="pill" style="color:var(--bad);margin:2px">${esc(b.term)} <a href="#" style="color:inherit;text-decoration:none" onclick="blrm(${b.id},this);return false" title="Remove">✕</a></span>`).join('') || '<span class="meta">Empty.</span>'}</div></div>
- <div class="panel"><h3>Permanent lock</h3>
-  <div class="meta">When a vendor submits you, lock them to that resume. A lock beats matching; if the locked resume is missing or fits under ${config.minMatchScore}%, the email is held.</div>
-  <div id="lockform"><label>Domain</label><input name="domain" placeholder="cdf.com"><label>Only this recruiter (optional)</label><input name="local" placeholder="part before @">
-  <div class="cols"><div><label>Resume</label><select name="resume_folder">${folders.map(f => `<option value="${esc(f.folder)}">${esc(f.name)}</option>`).join('')}</select></div>
-  <div><label>Reason</label><input name="reason" placeholder="submitted me to Acme"></div></div></div>
-  <div style="margin-top:10px"><button class="primary" onclick="simple('/api/locks', lockFields(), this)">Lock</button></div></div>
- <div class="panel" style="min-height:0"><h3>Locks (${locks.length}) &amp; changes</h3><div class="scroll">
-  ${locks.length ? table([['Vendor', l => `<b>${esc(lockLabel(l))}</b><div class="meta">${esc(l.reason ?? '')}</div>`], ['Resume', l => esc(resumeLabel(l.resume_folder))],
-    ['', l => `<button class="small" onclick="simple('/api/locks/${l.id}/delete',{},this,'Remove this lock?')">Remove</button>`]], locks) : '<p class="meta">No locks yet.</p>'}
-  <h4 class="meta" style="margin:14px 0 4px">Change history</h4>
-  ${audit.map(r => `<div class="meta" style="font-size:11.5px">${esc(r.ts)} · ${esc(r.action)} · ${esc(String(r.detail).slice(0, 140))}</div>`).join('') || '<p class="meta">None.</p>'}
- </div></div>
-</div></div>
+  return `${hero('vendors', 'Vendors', 'Recruiters you have emailed, where things stand with each one, and which resume they always get.')}
+<div class="section">Recruiters <span class="aside">${tally.length ? tally.map(([v, c]) => `${v} ${c}`).join(' · ') : `${vendors.length} emailed`}</span></div>
+${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder="Filter recruiters" oninput="for(const r of document.querySelectorAll('#vt>details'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'"></div>` : ''}
+<div class="grp" id="vt">${vendors.map(v => { const s = statuses.get(v.addr); const l = lockOf(v.addr);
+  return `<details class="disc"><summary class="row tall"><span class="lbl"><span>${esc(v.addr)}</span><span class="sub one">${v.sends} sent${v.last_sent ? ` · last ${esc(v.last_sent.slice(0, 10))}` : ''} · ${weekly.get(v.addr) ?? 0} this week${l ? ` · locked to ${esc(resumeLabel(l.resume_folder))}` : ''}</span></span>
+   ${s ? `<span class="pill ${s.status}">${esc(VENDOR_STATUSES[s.status])}</span>` : ''}<span class="chev"></span></summary>
+   <div class="disc-body">
+    <div class="row" data-addr="${esc(v.addr)}"><label>Status</label><span style="flex:1"></span><span class="popup"><select>${opts(s?.status)}</select></span>
+     <input type="date" value="${esc(s?.on_date ?? '')}" style="flex:none;width:130px"><input placeholder="Note" value="${esc(s?.note ?? '')}" style="flex:none;width:160px"><button class="small" onclick="vsave(this)">Save</button></div>
+    ${l ? '' : `<div class="row"><span class="lbl"><span>Resume lock</span><span class="sub">Always send this recruiter the same resume.</span></span><button class="small" onclick="lockPrefill('${esc(parseVendor(v.addr)?.domain ?? '')}')">Lock…</button></div>`}
+   </div></details>`; }).join('') || '<div class="empty-row">No recruiters yet. They appear after your first send.</div>'}</div>
+<div class="section">Resume locks <span class="aside">${locks.length}</span></div>
+<div class="grp">
+ ${locks.map(l => `<div class="row"><span class="ico">${icon('lock')}</span><span class="lbl"><span>${esc(lockLabel(l))}</span><span class="sub one">${esc(resumeLabel(l.resume_folder))}${l.reason ? ` · ${esc(l.reason)}` : ''}</span></span><button class="small" onclick="simple('/api/locks/${l.id}/delete',{},this,'Remove this lock?')">Remove</button></div>`).join('')}
+ <details class="disc" id="lock-fold"><summary class="row"><span class="lbl"><span style="color:var(--accent)">Add a lock…</span></span><span class="chev"></span></summary><div class="disc-body" id="lockform">
+  <div class="row"><label>Domain</label><input name="domain" placeholder="company.com"></div>
+  <div class="row"><label>Recruiter</label><input name="local" placeholder="Optional, part before @"></div>
+  <div class="row"><label>Resume</label><span style="flex:1"></span><span class="popup"><select name="resume_folder">${folders.map(f => `<option value="${esc(f.folder)}">${esc(f.name)}</option>`).join('')}</select></span></div>
+  <div class="row"><label>Reason</label><input name="reason" placeholder="Submitted me to Acme"></div>
+  <div class="btnrow" style="margin-top:6px"><span class="meta">A lock beats matching. If the locked resume fits under ${config.minMatchScore}%, the email is held.</span><span class="sp"></span><button class="primary" onclick="simple('/api/locks', lockFields(), this)">Add Lock</button></div>
+ </div></details>
+</div>
+<div class="section">Blocked <span class="aside">${black.length}</span></div>
+<div class="grp">
+ ${black.map(b => `<div class="row"><span class="ico">${icon('block')}</span><span class="lbl"><span>${esc(b.term)}</span></span><button class="small" onclick="blrm(${b.id},this)">Remove</button></div>`).join('')}
+ <div class="row"><input id="bl-term" placeholder="Domain, address or company name" style="text-align:left"><button class="small" onclick="bladd(this)">Block</button></div>
+</div>
+<p class="foot">Blocked recruiters are never emailed. Their postings are skipped and their open drafts are skipped now.</p>
+<div class="grp" style="margin-top:20px"><details class="disc"><summary class="row"><span class="lbl"><span>Change history</span></span><span class="val">${audit.length}</span><span class="chev"></span></summary><div class="disc-body">
+ ${audit.map(r => `<div class="meta" style="padding:3px 0">${esc(r.ts)} · ${esc(r.action)} · ${esc(String(r.detail).slice(0, 140))}</div>`).join('') || '<p class="meta">None.</p>'}</div></details></div>
 <script>
 async function bladd(b){ const t = document.getElementById('bl-term').value; if (!t.trim()) return; b.disabled = true;
   const j = await post('/api/blacklist', { term: t }); if (j.ok) { if (j.skipped) alert(j.skipped + ' open draft(s) from them were skipped.'); location.reload() } else { alert(j.error); b.disabled = false } }
-async function blrm(id, a){ if (!confirm('Remove from the blacklist?')) return; const j = await post('/api/blacklist/' + id + '/delete'); if (j.ok) location.reload(); else alert(j.error) }
+async function blrm(id, a){ if (!confirm('Unblock this recruiter?')) return; const j = await post('/api/blacklist/' + id + '/delete'); if (j.ok) location.reload(); else alert(j.error) }
 function lockFields(){ const o = {}; document.querySelectorAll('#lockform [name]').forEach(e => o[e.name] = e.value); return o }
-function lockPrefill(d){ document.querySelector('#lockform [name=domain]').value = d; document.querySelector('#lockform [name=domain]').focus() }
+function lockPrefill(d){ const f = document.getElementById('lock-fold'); if (f) f.open = true; document.querySelector('#lockform [name=domain]').value = d; document.querySelector('#lockform [name=domain]').focus() }
 async function vsave(b){
-  const box = b.parentElement; const [sel, date, note] = box.querySelectorAll('select,input');
+  const box = b.closest('[data-addr]'); const [sel, date, note] = box.querySelectorAll('select,input');
   b.disabled = true; const j = await post('/api/vendor-status', { address: box.dataset.addr, status: sel.value || 'clear', on_date: date.value, note: note.value });
   if (j.ok) location.reload(); else { alert(j.error); b.disabled = false }
 }
@@ -797,22 +1017,12 @@ async function vsave(b){
 // ── Logs ──────────────────────────────────────────────────────────────────────
 
 export function logsPage(view, status) {
-  const sub = `<div class="subtabs"><a href="/logs" class="${view !== 'scraped' ? 'on' : ''}">Activity log</a><a href="/scraped">All scraped jobs</a>
-  <span style="margin-left:auto"></span><a href="/export/events.csv">Log CSV</a><a href="/export/jobs.csv">Jobs CSV</a></div>`;
-  if (view === 'scraped') {
-    const rows = status === 'manual' ? db.prepare(`SELECT * FROM jobs WHERE source = 'manual' ORDER BY id DESC LIMIT 1500`).all()
-      : status ? db.prepare(`SELECT * FROM jobs WHERE status = ? ORDER BY id DESC LIMIT 1500`).all(status)
-      : db.prepare(`SELECT * FROM jobs ORDER BY id DESC LIMIT 1500`).all();
-    const cnt = db.prepare(`SELECT status, COUNT(*) n FROM jobs GROUP BY status ORDER BY n DESC`).all();
-    const filters = `<a href="/logs?view=scraped">all</a> · <a href="/logs?view=scraped&status=manual">manual</a> · ` + cnt.map(c => `<a href="/logs?view=scraped&status=${esc(c.status)}">${esc(c.status)} (${c.n})</a>`).join(' · ');
-    return `<div class="panel fill">${sub}<div class="meta" style="margin-bottom:8px">${filters}</div><div class="scroll">${table([
-      ['Scraped', r => esc(r.scraped_at)], ['Job', r => `${jobTitle(r)}<div class="meta">#${r.id}</div>`], ['Recruiter', r => esc(r.recruiter_email ?? '')],
-      ['Status', r => `<b>${esc(r.status)}</b><div class="meta">${esc(r.status_reason ?? '')}</div>`]], rows)}</div></div>`;
-  }
+  if (view === 'scraped') return scrapedPage({ show: '', day: 'all' });
   const rows = db.prepare(`SELECT * FROM events ORDER BY id DESC LIMIT 1500`).all();
-  return `<div class="panel fill">${sub}<div class="scroll">${table([
-    ['Time', r => esc(r.ts)], ['Level', r => r.level === 'error' ? `<span class="bad">error</span>` : r.level === 'warn' ? `<span class="warn">warn</span>` : esc(r.level)],
-    ['Event', r => esc(r.type)], ['Job', r => r.job_id ? `#${r.job_id}` : ''], ['Message', r => esc(r.message)]], rows)}</div></div>`;
+  return `<div class="filterbar"><input type="search" placeholder="Filter the log" oninput="for(const r of document.querySelectorAll('#lg .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
+ <span class="sp"></span><a class="quiet" href="/export/events.csv">Export Log</a><a class="quiet" href="/export/jobs.csv">Export Postings</a></div>
+<div class="grp" id="lg">${rows.map(r => `<div class="row">${r.level === 'error' ? '<span class="dot"></span>' : r.level === 'warn' ? '<span class="dot ring"></span>' : '<span class="dot grey"></span>'}
+  <span class="lbl wrap"><div>${esc(r.message)}</div><span class="sub one">${esc(r.ts)} · ${esc(r.type)}${r.job_id ? ` · #${r.job_id}` : ''}</span></span></div>`).join('') || '<div class="empty-row">Nothing logged yet.</div>'}</div>`;
 }
 
 // ── Scraped: every posting the bot has read, with what it decided ─────────────
@@ -852,40 +1062,39 @@ export function scrapedPage({ show = '', day = 'today', q = '' } = {}) {
   };
   const url = (o) => '/scraped?' + new URLSearchParams({ show, day, q, ...o }).toString();
   const chip = (on, href, label) => `<a href="${esc(href)}" class="${on ? 'on' : ''}">${label}</a>`;
-  const open = (r) => !r.app_id ? '' : ['draft', 'held', 'failed'].includes(r.app_status) ? `<a href="/${r.source === 'manual' ? 'manual' : 'review'}?open=${r.app_id}">open draft</a>` : `<a href="/app/${r.app_id}">view email</a>`;
+  const open = (r) => !r.app_id ? '' : ['draft', 'held', 'failed'].includes(r.app_status) ? `<a href="/${r.source === 'manual' ? 'manual' : 'review'}?open=${r.app_id}">Open Draft</a>` : `<a href="/app/${r.app_id}">View Email</a>`;
   const actionScript = rows.some(r => r.status === 'low_match') ? `<script>
-async function rescoreLowMatch(id, button) {
-  button.disabled = true; button.textContent = 'Scoring…';
+async function applyAnyway(id, button) {
+  button.disabled = true; button.textContent = 'Drafting…';
   try {
-    const response = await fetch('/api/rematch-low/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Nvoids-Bot': '1' }, body: '{}' });
-    const result = await response.json();
-    if (!result.ok) throw new Error(result.error || 'Could not re-score this posting');
-    location.reload();
+    const result = await post('/api/apply-anyway/' + id);
+    if (!result.ok) throw new Error(result.error || 'Could not draft this posting');
+    // Stay on this page so you can add several; the row shows it's done, with a link to the draft.
+    const done = document.createElement('a');
+    done.href = '/review?open=' + result.app_id; done.className = 'nw'; done.textContent = 'In Review (' + result.score + '%)';
+    button.replaceWith(done);
+    const tr = done.closest('tr'); if (tr) tr.style.opacity = '.55';
+    const tab = document.querySelector('.sb-item[href="/review"]');
+    if (tab) { let b = tab.querySelector('b'); if (!b) { b = document.createElement('b'); b.textContent = '0'; tab.append(b) } b.textContent = Number(b.textContent) + 1 }
   } catch (error) {
-    button.disabled = false; button.textContent = 'Re-score'; alert(error.message);
+    button.disabled = false; button.textContent = 'Apply Anyway'; alert(error.message);
   }
 }</script>` : '';
-  return `<div class="panel fill">
- <div class="subtabs">${chip(day === 'hour', url({ day: 'hour' }), 'Last hour')}${chip(day === 'today', url({ day: 'today' }), 'Today')}${chip(day === 'all', url({ day: 'all' }), 'All time')}
-  <form method="get" action="/scraped" style="margin-left:auto;display:flex;gap:6px"><input type="hidden" name="show" value="${esc(show)}"><input type="hidden" name="day" value="${esc(day)}">
-  <input name="q" value="${esc(q)}" placeholder="Filter title, company, email, reason…" style="width:260px"><button class="small">Filter</button></form>
-  <a href="/export/jobs.csv">CSV</a></div>
- <div class="subtabs" style="flex-wrap:wrap">${chip(!show, url({ show: '' }), `All <b>${total}</b>`)}${tally.map(([k, label, c]) => chip(show === k, url({ show: k }), `${label} <b>${c}</b>`)).join('')}${chip(show === 'manual', url({ show: 'manual' }), `Manual JDs <b>${manualCount}</b>`)}</div>
- <div class="scroll">${rows.length ? table([
-  ['Posted', r => `${esc((r.posted_raw || '').replace(/\s+/g, ' ').trim())}<div class="meta">read ${esc((r.scraped_at || '').slice(11, 16))}</div>`],
-  ['Job', r => `${jobTitle(r)}<div class="meta">#${r.id}${r.company ? ' · ' + esc(r.company) : ''}${(r.location_jd || r.location_listed) ? ' · ' + esc(r.location_jd || r.location_listed) : ''}</div>`],
-  ['Recruiter', r => `${esc(r.recruiter_name ?? '')}<div class="meta">${esc(r.recruiter_email ?? '')}</div>`],
-  ['Decision', r => {
+  return `<div class="filterbar"><div class="seg">${chip(day === 'hour', url({ day: 'hour' }), 'Last Hour')}${chip(day === 'today', url({ day: 'today' }), 'Today')}${chip(day === 'all', url({ day: 'all' }), 'All Time')}</div>
+  <span class="sp"></span>
+  <form method="get" action="/scraped" style="margin:0"><input type="hidden" name="show" value="${esc(show)}"><input type="hidden" name="day" value="${esc(day)}"><input type="search" name="q" value="${esc(q)}" placeholder="Filter postings"></form>
+  <a class="quiet" href="/export/jobs.csv">Export CSV</a></div>
+ <div class="filterbar"><div class="seg">${chip(!show, url({ show: '' }), `All <b>${total}</b>`)}${tally.map(([k, label, c]) => chip(show === k, url({ show: k }), `${label} <b>${c}</b>`)).join('')}${chip(show === 'manual', url({ show: 'manual' }), `Manual <b>${manualCount}</b>`)}</div></div>
+ <div class="grp">${rows.map(r => {
     const info = matchInfo(r);
-    const missing = r.status !== 'low_match' ? '' : `<div class="meta">Not found in best resume: ${info.missing.length ? info.missing.map(esc).join(', ') : r.ranking_json ? 'none among detected skills' : 'details unavailable for this older result'}</div>`;
-    return `<b>${esc(r.status)}</b><div class="meta">${esc(r.status_reason ?? '')}</div>${missing}`;
-  }],
-  ['Resume', r => {
-    const info = matchInfo(r);
-    return info.folder ? `folder ${esc(info.folder)}<div class="meta">${info.score ?? '?'}%</div>` : '';
-  }],
-  ['', r => `${open(r)}${r.status === 'low_match' ? ` <button class="small" onclick="rescoreLowMatch(${r.id},this)">Re-score</button>` : ''}`]], rows) : '<p class="meta">Nothing here for this filter.</p>'}
- ${rows.length >= 1000 ? '<p class="meta">Showing the newest 1000. Narrow it with the filter.</p>' : ''}</div></div>${actionScript}`;
+    const missing = r.status !== 'low_match' || !info.missing.length ? '' : `<span class="sub one">Missing: ${info.missing.slice(0, 12).map(esc).join(', ')}${info.missing.length > 12 ? '…' : ''}</span>`;
+    const action = `${open(r)}${r.status === 'low_match' ? ` <button class="small" onclick="applyAnyway(${r.id},this)" title="Draft it with your best resume, whatever the match. It still waits in Review for your approval.">Apply Anyway</button>` : ''}`;
+    return `<div class="row tall"><span class="lbl wrap"><div>${jobTitle(r)}</div>
+     <span class="sub one">#${r.id} · ${esc((r.posted_raw || '').replace(/\s+/g, ' ').trim())}${r.company ? ' · ' + esc(r.company) : ''}${(r.location_jd || r.location_listed) ? ' · ' + esc(r.location_jd || r.location_listed) : ''}${r.recruiter_email ? ' · ' + esc(r.recruiter_email) : ''}</span>
+     <span class="sub clamp">${esc(r.status.replace(/_/g, ' '))}${r.status_reason ? ` · ${esc(r.status_reason)}` : ''}</span>${missing}</span>
+     ${info.score != null ? `<span class="val">${info.score}%</span>` : ''}${action ? `<span class="nw">${action}</span>` : ''}</div>`;
+  }).join('') || '<div class="empty-row">Nothing here for this filter.</div>'}</div>
+ ${rows.length >= 1000 ? '<p class="foot">Showing the newest 1000. Narrow it with the filter.</p>' : ''}${actionScript}`;
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -900,31 +1109,35 @@ export function healthPage() {
   let dbSize = '';
   try { dbSize = `${(statSync(join(config.dataDir, 'nvoids-bot.db')).size / 1e6).toFixed(1)} MB` } catch {}
   const ramp = [0, 2, 4, 6, 8].map(d => { const x = new Date(Date.now() + d * 86_400_000); return `${ymd(x).slice(5)}: ${dailyCap(x)}` }).join(' · ');
-  const check = (ok, title, detail) => `<div class="check"><i class="${ok === true ? 'ok' : ok === false ? 'bad' : 'warn'}">${ok === true ? '✓' : ok === false ? '✗' : '⚠'}</i><div><b>${title}</b><span class="meta">${detail}</span></div></div>`;
+  const check = (ok, title, detail, right = '') => `<div class="row tall"><span class="st ${ok === true ? 'ok' : ok === false ? 'bad' : 'warn'}"></span><span class="lbl wrap"><div>${title}</div><span class="sub">${detail}</span></span>${right}</div>`;
   const watcherPaused = getState('watcher_paused', '0') === '1';
-  return `<div class="grid g2 fill" style="align-content:start">
-<div class="panel"><h3>Sending</h3>
- ${check(emailConfigured(), 'Gmail', emailConfigured() ? `${esc(config.gmailUser)} · <button class="small" onclick="verify(this)">Test login</button> <span id="vmsg"></span>` : 'GMAIL_USER / GMAIL_APP_PASSWORD missing in .env')}
- ${check(!c.q.paused, 'Sending', c.q.paused ? 'paused (header ▶ Sending to resume)' : 'on')}
- ${check(c.q.dryRun ? null : true, 'Dry run', c.q.dryRun ? 'ON — nothing is really sent (DRY_RUN=true)' : 'off — emails really go out')}
- ${check(stuck ? false : true, 'Stuck sends', stuck ? `${stuck} email(s) stuck in “sending”` : 'none')}
- ${check(true, 'Daily cap', `nvoids today ${c.q.dailyCapSentToday}/${c.q.cap} · total sent ${c.q.sentToday} · ramp ${ramp}`)}
- <div class="check"><i class="${getCcEmails().length ? 'ok' : 'warn'}">${getCcEmails().length ? '✓' : '⚠'}</i><div><b>CC recipients</b><span class="meta">Enter email addresses separated by commas. This saved dashboard list overrides CC_EMAILS in .env.</span><div style="display:flex;gap:6px;margin-top:6px"><input id="cc-emails" type="text" value="${esc(getCcEmails().join(', '))}" placeholder="name@example.com, another@example.com" style="flex:1;min-width:180px"><button class="small" onclick="saveCc(this)">Save CC</button></div><span id="cc-msg" class="meta"></span></div></div>
+  return `${hero('health', 'Status', 'Connections, the watcher, and your data.')}
+<div class="section">Sending</div>
+<div class="grp">
+ ${check(emailConfigured(), 'Gmail', emailConfigured() ? `${esc(config.gmailUser)} <span id="vmsg"></span>` : 'GMAIL_USER / GMAIL_APP_PASSWORD missing in .env', emailConfigured() ? '<button class="small" onclick="verify(this)">Test Login</button>' : '')}
+ ${check(!c.q.paused, 'Sending', c.q.paused ? 'Paused' : 'On', `<label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="simple('/api/pause-sending',{on:!this.checked},this)" aria-label="Sending"><span></span></label>`)}
+ ${check(c.q.dryRun ? null : true, 'Dry run', c.q.dryRun ? 'On, so nothing is really sent (DRY_RUN=true in .env)' : 'Off, so emails really go out')}
+ ${check(stuck ? false : true, 'Stuck sends', stuck ? `${stuck} email(s) stuck in “sending”` : 'None')}
+ ${check(true, 'Daily cap', `${c.q.dailyCapSentToday} of ${c.q.cap} today · ${c.q.sentToday} sent in total · next days ${ramp}`)}
 </div>
-<div class="panel"><h3>Watcher &amp; data</h3>
- ${check(watcherPaused ? null : pollAgeMin !== null && pollAgeMin < 10 && getState('last_poll_ok', '1') === '1', 'nvoids watcher', watcherPaused ? 'paused' : lastPoll ? `last check ${esc(lastPoll)} (${pollAgeMin} min ago)${getState('last_poll_ok', '1') === '1' ? '' : ' — FAILED'}` : 'never checked')}
- ${(() => { const b = breakerState(); return check(b.until > Date.now() ? false : b.failures ? null : true, 'Circuit breaker', b.until > Date.now() ? `open — ${b.failures} failed checks; retrying at ${new Date(b.until).toLocaleTimeString()}` : b.failures ? `${b.failures} failed check(s) in a row` : 'closed (nvoids reachable)') })()}
- ${check(true, 'nvoids layout', getState('nvoids_layout', '') === 'old' ? 'Old site (job_details.jsp) — handled' : getState('nvoids_layout', '') ? 'New site (j_details.jsp)' : 'Not checked yet')}
- ${check(true, 'Rescue missed postings', `<span style="display:inline-flex;gap:6px;align-items:center">read back <input id="rh" type="number" min="1" max="48" value="6" style="width:64px;padding:3px 6px"> hours <button class="small" onclick="doRescue(this)">Rescue</button> <span id="rmsg"></span></span>`)}
- ${check(resumes.length > 0, 'Resumes', resumes.length ? `${resumes.length} found: ${resumes.map(r => esc(r.name)).join(', ')}` : `none found in ${esc(config.resumesDir)}`)}
- ${check(existsSync(join(ROOT, 'resume-lanes.json')) ? true : null, 'Resume lanes', 'resume-lanes.json (default folder, margin, title lanes)')}
- ${check(errors24 ? null : true, 'Errors (24h)', `${errors24} — see Logs`)}
- ${check(true, 'Database', `${dbSize} · ${n('SELECT COUNT(*) n FROM jobs')} jobs · ${n('SELECT COUNT(*) n FROM applications')} drafts/emails`)}
- ${check(existsSync(HISTORY_PATH), 'Sent_History.md', existsSync(HISTORY_PATH) ? esc(HISTORY_PATH) : 'not created yet')}
-</div></div>
+<div class="section">Cc on every email</div>
+<div class="grp"><div class="row"><input id="cc-emails" type="text" value="${esc(getCcEmails().join(', '))}" placeholder="name@example.com, another@example.com" style="text-align:left"><button class="small" onclick="saveCc(this)">Save</button></div></div>
+<p class="foot"><span id="cc-msg">Comma-separated. Overrides CC_EMAILS in .env.</span></p>
+<div class="section">Watcher and data</div>
+<div class="grp">
+ ${check(watcherPaused ? null : pollAgeMin !== null && pollAgeMin < 10 && getState('last_poll_ok', '1') === '1', 'nvoids watcher', watcherPaused ? 'Paused' : lastPoll ? `Last check ${esc(lastPoll)} (${pollAgeMin} min ago)${getState('last_poll_ok', '1') === '1' ? '' : ', failed'}` : 'Never checked', `<label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="simple('/api/pause-watcher',{on:!this.checked},this)" aria-label="Watcher"><span></span></label>`)}
+ ${(() => { const b = breakerState(); return check(b.until > Date.now() ? false : b.failures ? null : true, 'Circuit breaker', b.until > Date.now() ? `Open after ${b.failures} failed checks; retrying at ${new Date(b.until).toLocaleTimeString()}` : b.failures ? `${b.failures} failed check(s) in a row` : 'Closed, nvoids is reachable') })()}
+ ${check(true, 'nvoids layout', getState('nvoids_layout', '') === 'old' ? 'Old site (job_details.jsp), handled' : getState('nvoids_layout', '') ? 'New site (j_details.jsp)' : 'Not checked yet')}
+ ${check(true, 'Rescue missed postings', `Read back the listing after the Mac slept. <span id="rmsg"></span>`, `<input id="rh" type="number" min="1" max="48" value="6" style="flex:none;width:44px" aria-label="Hours"><span class="meta">hours</span><button class="small" onclick="doRescue(this)">Rescue</button>`)}
+ ${check(resumes.length > 0, 'Resumes', resumes.length ? `${resumes.length} found: ${resumes.map(r => esc(r.name)).join(', ')}` : `None found in ${esc(config.resumesDir)}`)}
+ ${check(existsSync(join(ROOT, 'resume-lanes.json')) ? true : null, 'Resume lanes', 'resume-lanes.json')}
+ ${check(errors24 ? null : true, 'Errors in the last 24 hours', `${errors24}`, errors24 ? '<a class="quiet" href="/logs">Show Log</a>' : '')}
+ ${check(true, 'Database', `${dbSize} · ${n('SELECT COUNT(*) n FROM jobs')} postings · ${n('SELECT COUNT(*) n FROM applications')} drafts and emails`)}
+ ${check(existsSync(HISTORY_PATH), 'Sent_History.md', existsSync(HISTORY_PATH) ? esc(HISTORY_PATH) : 'Not created yet')}
+</div>
 <script>async function doRescue(b){ b.disabled = true; const m = document.getElementById('rmsg'); m.textContent = 'reading nvoids… (can take a few minutes)';
   const j = await post('/api/rescue', { hours: Number(document.getElementById('rh').value) }); b.disabled = false;
-  m.textContent = j.ok ? j.found + ' missed posting(s), ' + j.drafted + ' new draft(s)' : j.error; m.className = j.ok ? 'ok' : 'bad' }
+  m.textContent = j.ok ? j.found + ' missed posting(s), ' + j.drafted + ' new draft(s).' : j.error; m.className = j.ok ? '' : 'bad' }
 async function saveCc(b){ const input = document.getElementById('cc-emails'), msg = document.getElementById('cc-msg'); b.disabled = true;
   const j = await post('/api/cc', { emails: input.value }); b.disabled = false;
   if (j.ok) { input.value = j.emails.join(', '); msg.textContent = 'Saved. Applies immediately to queued and future recruiter emails.'; msg.className = 'meta ok' }

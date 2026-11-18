@@ -7,7 +7,7 @@ import { pollOnce } from './pipeline.js';
 import { listResumeFiles } from './resumes.js';
 import { startServer } from './server.js';
 import { startMailer } from './mailer.js';
-import { refreshDrafts, clearStaleRematch } from './actions.js';
+import { refreshDrafts, clearStaleRematch, purgeOffTargetDrafts } from './actions.js';
 
 const once = process.argv.includes('--once');
 
@@ -15,6 +15,7 @@ const once = process.argv.includes('--once');
 const stuck = db.prepare(`UPDATE applications SET status = 'failed', error = 'Interrupted while sending — check your Gmail Sent folder before retrying', updated_at = ? WHERE status = 'sending'`).run(now());
 if (stuck.changes) logEvent('warn', 'recovered', null, `${stuck.changes} send(s) were interrupted; marked failed for you to check`);
 
+purgeOffTargetDrafts();
 refreshDrafts();
 clearStaleRematch();
 

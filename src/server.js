@@ -12,7 +12,7 @@ import { config, ROOT } from './config.js';
 import { db, getState, setState, logEvent } from './db.js';
 import { sendTestToSelf, verifyEmail, HISTORY_PATH, setCcEmails, getCcEmails } from './email.js';
 import { listResumeFiles } from './resumes.js';
-import { pollOnce, rescue, rematchLowMatch } from './pipeline.js';
+import { pollOnce, rescue, rematchLowMatch, applyAnyway } from './pipeline.js';
 import { queueStatus, setSendingPaused } from './mailer.js';
 import { approve, cancelQueued, skip, resolveHold, setLock, removeLock, rematch, rematchAll, rematchSome, rematchStatus, stopRematch, editQueued, setVendorStatus, addBlacklist, removeBlacklist } from './actions.js';
 import { addManualJob } from './manual.js';
@@ -179,6 +179,7 @@ export function startServer() {
   app.post('/api/poll', ok(() => pollOnce({ force: true })));
   app.post('/api/rescue', ok(req => rescue(Number(req.body?.hours ?? 6))));
   app.post('/api/rematch-low/:id', ok(req => rematchLowMatch(req.params.id)));
+  app.post('/api/apply-anyway/:id', ok(req => applyAnyway(req.params.id)));
   app.post('/api/manual', ok(req => addManualJob(req.body ?? {})));
   app.post('/api/approve/:id', ok(req => { approve(req.params.id, req.body ?? {}); }));
   app.post('/api/skip/:id', ok(req => { skip(req.params.id); }));

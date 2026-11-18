@@ -32,6 +32,8 @@ export const config = {
 
   // Matching gates
   minMatchScore: num(process.env.MIN_MATCH_SCORE, 40),   // best resume below this → no draft (logged as low_match)
+  minAiJdTerms:  Math.max(1, num(process.env.MIN_AI_JD_TERMS, 4)),
+  aiJdOnly:      bool(process.env.AI_JD_ONLY, false),  // let a generic title ("Senior Engineer") in on JD terms alone; off = AI must be in the title   // title has no AI/ML term → the JD needs this many distinct AI/ML technologies
   minJdSkills:   num(process.env.MIN_JD_SKILLS, 4),      // fewer known skills in the JD → draft marked "thin"
 
   // Sending: queue + pacing

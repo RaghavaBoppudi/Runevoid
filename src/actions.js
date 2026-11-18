@@ -5,7 +5,7 @@ import { listResumeFiles, rankResumes } from './resumes.js';
 import { config } from './config.js';
 import { buildDraft, assertNoSourceMention, assertNoJobDetails, normalizeCcEmails, ccFor } from './email.js';
 import { lockFor, lockLabel, parseVendor, tomorrow, nextMonday } from './rules.js';
-import { blacklistHit } from './filters.js';
+import { blacklistHit, classify } from './filters.js';
 
 const jobOf = (app) => db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(app.job_id);
 
@@ -289,6 +289,24 @@ export function refreshDrafts() {
     n++;
   }
   if (n) logEvent('info', 'drafts_refreshed', null, `Rewrote ${n} unapproved draft(s) with the current email template`);
+  return n;
+}
+
+// Unapproved nvoids drafts made under older filters: re-run today's filters and skip the ones that no
+// longer qualify (e.g. Java/DevOps drafts left over from before the AI/ML-only filter). Called at startup.
+// Approved, held and pasted-by-you emails are left alone.
+export function purgeOffTargetDrafts() {
+  let n = 0;
+  for (const app of db.prepare(`SELECT a.id, a.job_id FROM applications a JOIN jobs j ON j.id = a.job_id
+                                WHERE a.status = 'draft' AND j.id >= 1000000`).all()) {
+    const v = classify(jobOf(app));
+    if (v.keep) continue;
+    updateApp(app.id, { status: 'skipped', error: `filters changed: ${v.reason}` });
+    setJobStatus(app.job_id, 'filtered_out', v.reason);
+    logEvent('info', 'skipped', app.job_id, `Draft skipped: no longer passes the filters (${v.reason})`);
+    n++;
+  }
+  if (n) logEvent('info', 'drafts_purged', null, `Skipped ${n} unapproved draft(s) that no longer pass the AI/ML filters`);
   return n;
 }
 

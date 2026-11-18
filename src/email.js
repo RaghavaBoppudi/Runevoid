@@ -220,6 +220,74 @@ function clientName(jd) {
   return '';
 }
 
+
+// ── Where the job is, for the subject line ("City, ST") ──────────────────────────
+// Order: the JD's own location line → the posting title → the JD text → nvoids' location column (that one is
+// often wrong — "Trenton, Utah" — so it is used only when the JD or title also names that city and state).
+// Several locations → the first. A remote-first location → "Remote". Nothing found → '' (subject drops the part).
+const US_STATES = { alabama:'AL', alaska:'AK', arizona:'AZ', arkansas:'AR', california:'CA', colorado:'CO', connecticut:'CT', delaware:'DE',
+  'district of columbia':'DC', florida:'FL', georgia:'GA', hawaii:'HI', idaho:'ID', illinois:'IL', indiana:'IN', iowa:'IA', kansas:'KS',
+  kentucky:'KY', louisiana:'LA', maine:'ME', maryland:'MD', massachusetts:'MA', michigan:'MI', minnesota:'MN', mississippi:'MS', missouri:'MO',
+  montana:'MT', nebraska:'NE', nevada:'NV', 'new hampshire':'NH', 'new jersey':'NJ', 'new mexico':'NM', 'new york':'NY', 'north carolina':'NC',
+  'north dakota':'ND', ohio:'OH', oklahoma:'OK', oregon:'OR', pennsylvania:'PA', 'rhode island':'RI', 'south carolina':'SC', 'south dakota':'SD',
+  tennessee:'TN', texas:'TX', utah:'UT', vermont:'VT', virginia:'VA', washington:'WA', 'west virginia':'WV', wisconsin:'WI', wyoming:'WY' };
+const US_CODES = new Set(Object.values(US_STATES));
+const US_STATE_NAMES = Object.keys(US_STATES).sort((a, b) => b.length - a.length).join('|');
+const CONNECT = /^(?:of|de|la|du|del|des|on|upon)$/;   // lowercase joiners only ("King of Prussia"); "Los", "San", "St." are city words
+const NOT_CITY = /^(?:hybrid|onsite|on-?site|remote|location|locations?|local|locals|need|needs|urgent|position|role|only|job|work|based|out|in|at|for|the|and|or|day|days|candidates?|client|direct|contract|full|time|fte|w2|c2c|engineer|developer|lead|senior|sr\.?|state|office|from|near|with|preferred|must|be|is|a|an|to|interview|hiring|opening|opportunity|requirement|resume|any|visa|us|usa|united|states)$/i;
+const titleCase = (w) => /[A-Z]/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1);
+// The city: the run of words right before the state, after the last separator, without filler words.
+function cityBefore(text, loose) {
+  const seg = text.split(/\|\||[|/:;()\[\]•–—]|\s-+\s|\s-|-\s|\bat\b|\bin\b|\bfor\b|\bfrom\b|\bnear\b|\bto\b/i).pop() ?? '';
+  const words = seg.trim().split(/\s+/).filter(Boolean);
+  const out = [];
+  for (let i = words.length - 1; i >= 0 && out.length < 4; i--) {
+    const w = words[i].replace(/[^A-Za-z.'-]/g, '');
+    if (!w) break;
+    if (CONNECT.test(w) && out.length) { out.unshift(w.toLowerCase()); continue; }
+    if (NOT_CITY.test(w) || !(loose || /^[A-Z]/.test(w))) break;
+    out.unshift(titleCase(w));
+  }
+  while (out.length && CONNECT.test(out[0])) out.shift();
+  const city = out.join(' ').replace(/\.$/, '');
+  return city.length >= 3 ? city : '';
+}
+// First "City, ST" / "City, State" in a piece of text (loose = a location field, where "louisville KY" counts).
+function findCityState(text, loose = false) {
+  const t = String(text ?? '').replace(/\s+/g, ' ');
+  const re = new RegExp(String.raw`,\s*(${US_STATE_NAMES})\b|,\s*([A-Z]{2})\b(?![a-z])` + (loose ? String.raw`|\s([A-Z]{2})\b(?![a-z])` : ''), 'gi');
+  for (const m of t.matchAll(re)) {
+    const code = m[1] ? US_STATES[m[1].toLowerCase()] : (m[2] ?? m[3]);
+    if (!US_CODES.has(code) || (!m[1] && code !== (m[2] ?? m[3]))) continue;   // codes must be capitals: "in", "or", "me" are words
+    if (!m[1] && !/[A-Z]{2}/.test(m[2] ?? m[3])) continue;
+    const city = cityBefore(t.slice(0, m.index), loose);
+    const asState = US_STATES[city.toLowerCase()];   // "Virginia, MD" is two states; "New York, NY" / "Washington, DC" are cities
+    if (city && (!asState || asState === code || (code === 'DC' && /^washington$/i.test(city)))) return `${city}, ${code}`;
+  }
+  return '';
+}
+export function cityState(job) {
+  const loc = String(job.location_jd ?? '').trim();
+  if (/^\W*(?:100\s*%\s*)?remote\b/i.test(loc)) return 'Remote';
+  const jd = String(job.jd_text ?? '');
+  const labelled = [...jd.matchAll(/(?:^|\n)\s*(?:job\s+|work\s+)?locations?\s*[:\-–]+\s*([^\n]{2,90})/gi)].map(m => m[1]);
+  for (const [text, loose] of [[loc, true], ...labelled.map(l => [l, true]), [job.title, false], [jd.slice(0, 1500), false]]) {
+    const hit = findCityState(text, loose);
+    if (hit) return hit;
+  }
+  // nvoids' column ("Phoenix, Arizona, USA"): only if the posting itself names that city and state.
+  const listed = /^\s*([^,]+),\s*([^,]+)/.exec(job.location_listed ?? '');
+  if (listed) {
+    const code = US_STATES[listed[2].trim().toLowerCase()] ?? (US_CODES.has(listed[2].trim()) ? listed[2].trim() : '');
+    const city = listed[1].trim();
+    const hay = `${job.title ?? ''}\n${jd}`;
+    const named = (w) => new RegExp(String.raw`(?<![A-Za-z])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z])`, 'i').test(hay);
+    if (code && !/^remote$/i.test(city) && named(city) && (new RegExp(String.raw`\b${code}\b`).test(hay) || named(listed[2].trim()))) return `${city}, ${code}`;
+  }
+  if (/\b(?:100\s*%\s*)?remote\b/i.test(`${loc} ${job.title ?? ''}`)) return 'Remote';
+  return '';
+}
+
 // `chosen` is one entry of the resume ranking ({ folder, path, matched, background, … }). The skills
 // and background lines only name things found in BOTH the JD and that resume, so the email never claims
 // what the resume doesn't show.
@@ -264,9 +332,12 @@ export function buildDraft(job, chosen, { thin = false } = {}) {
     .filter(Boolean).join('\n');
   const vars = {
     title,
-    // Locked: the job's location and job ID never appear in a recruiter email. These stay empty even if
-    // a template asks for them.
+    // Locked: the job ID never appears in a recruiter email, and the location never appears in the body.
+    // These stay empty even if a template asks for them.
     location: '', location_part: '', place_id: '', job_id: '',
+    // The one exception: "City, ST" in the SUBJECT ("AI Engineer - Dallas, TX - Raghava Boppudi"). Use {subject_place}
+    // only on the Subject line; the body check below still blocks the location anywhere in the body.
+    subject_place: (() => { const p = cityState(job); return p ? ` - ${p}` : ''; })(),
     greeting: first ? `Hi ${first},` : 'Hi,',
     recruiter_first: first,
     company: job.company ?? '',
@@ -325,8 +396,8 @@ function withoutPlace(title, job) {
   return t.replace(/\s*[-–|,:/(]+\s*$/, '').trim();
 }
 
-// Locked rule: no job ID and no job location in a recruiter email. Checked on approve and again right
-// before sending, so an edit in the dashboard can't put them back.
+// Locked rule: no job ID anywhere, and no job location in the BODY (the subject may carry "City, ST").
+// Checked on approve and again right before sending, so an edit in the dashboard can't put them back.
 export function assertNoJobDetails(job, subject, body) {
   const role = String(subject ?? '').split(/\s+[–-]\s+/)[0];
   if (isGreeting(role)) throw new Error(`The subject starts with “${role}”, which is a greeting, not a job title. Put the role in the subject.`);
@@ -335,8 +406,8 @@ export function assertNoJobDetails(job, subject, body) {
   const ids = [job?.id, job?.ref_id].filter(v => v && String(v).length >= 4).map(String);
   const id = ids.find(v => new RegExp(String.raw`(?<![\w-])${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\w-])`).test(text));
   if (id) throw new Error(`This email contains the job number ${id}. Remove it before sending.`);
-  const place = placeStrings(job).find(p => text.toLowerCase().includes(p.toLowerCase()));
-  if (place) throw new Error(`This email mentions the job location (“${place}”). Remove it before sending: locations never go in your emails.`);
+  const place = placeStrings(job).find(p => String(body ?? '').toLowerCase().includes(p.toLowerCase()));
+  if (place) throw new Error(`The email body mentions the job location (“${place}”). Remove it before sending: the location only goes in the subject.`);
 }
 
 let transporter = null;

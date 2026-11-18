@@ -1,6 +1,7 @@
 // Which postings get a draft. Three tiers, checked in this order:
 //   1. SKIP   (EXCLUDE_TITLE, EXCLUDE)  — never drafted; the reason is logged under "All scraped".
-//   2. KEEP   AI/ML roles (AI_TITLE in the title / first 400 chars, or 4+ AI terms), plus Java and Cloud/DevOps titles.
+//   2. KEEP   AI/ML roles only: an AI/ML term in the title, or (for a generic technical title)
+//             at least MIN_AI_JD_TERMS distinct AI/ML technologies in the JD. Everything else is skipped.
 //   3. FLAG   (FLAGS) — still drafted, but the draft shows a warning so you read it before approving.
 // Patterns ported from the Python nvoids-resume-mailer, which tuned them on ~6,000 real nvoids postings.
 // Every entry is a case-insensitive regex; add or delete lines to widen or narrow what you get.
@@ -8,6 +9,7 @@
 // ── 1a. Skip if the TITLE matches ────────────────────────────────────────────
 import { cleanJd } from './matcher.js';
 import { db } from './db.js';
+import { config } from './config.js';
 
 const EXCLUDE_TITLE = [
   /hot[\s\-_.]*list/i,                                         // consultant hotlists
@@ -18,7 +20,7 @@ const EXCLUDE_TITLE = [
   /\bbench\b/i, /consultants? available/i, /candidates? available/i, /available (?:consultants?|candidates?)/i,
   // not engineering roles, even when the JD name-drops an AI stack
   /business analyst/i, /product (?:manager|analyst)/i, /(?:project|program) manager/i, /scrum master/i,
-  /\bqa\b/i, /\btester\b/i, /\bsdet\b/i, /\bdesigner\b/i, /\bintern(?:ship)?\b/i, /test manager/i,
+  /product owner/i, /\bqa\b/i, /\btester\b/i, /\bsdet\b/i, /\bdesigner\b/i, /\bintern(?:ship)?\b/i, /test manager/i,
   /marketing\s+(?:specialist|manager|coordinator|associate)/i, /enablement coach/i, /\bpayroll\b/i,
   // package-specific roles (title only: a JD that merely integrates with SAP etc. is fine)
   /\bsap\b/i, /\bmainframes?\b/i, /\bcobol\b/i, /\bsalesforce\b/i, /\bpeoplesoft\b/i, /\bworkday\b/i,
@@ -56,9 +58,10 @@ const CANDIDATE_SHEET = /^\W*name\s*[:\-][\s\S]{0,1500}?^\W*(?:relocation|visa(?
 const AI_TITLE = [
   /\bai\b/i, /\ba\.i\./i, /\bai[\s/-]?ml\b/i, /\bml\b/i, /machine[\s-]?learning/i, /deep[\s-]?learning/i, /\bneural\b/i,
   /\bllms?\b/i, /gen(?:erative)?[\s-]?ai/i, /\bgenerative\b/i, /\bagentic\b/i, /\brag\b/i, /prompt engineer/i,
-  /foundation model/i, /vector (?:database|search|db)/i, /\bcopilot\b/i, /\bopenai\b/i, /lang(?:chain|graph)/i, /hugging ?face/i,
-  /\bmlops\b/i, /\bllmops\b/i, /\baiops\b/i, /sagemaker/i, /\bbedrock\b/i, /vertex ai/i, /azure (?:ai|machine learning|openai)/i,
-  /cognitive services/i, /tensorflow|pytorch/i, /data[\s-]?scien/i, /applied[\s-]?scientist/i, /research[\s-]?(?:scientist|engineer)/i,
+  /foundation model/i, /vector (?:database|search|db)/i, /\bopenai\b/i, /lang(?:chain|graph)/i, /hugging ?face/i,
+  /forward[\s-]?deployed/i, /\bfde\b/i,
+  /\bmlops\b/i, /\bllmops\b/i, /sagemaker/i, /\bbedrock\b/i, /vertex ai/i, /azure (?:ai|machine learning|openai)/i,
+  /tensorflow|pytorch/i, /data[\s-]?scien/i, /applied[\s-]?scientist/i, /research[\s-]?(?:scientist|engineer)/i,
   /\bnlp\b/i, /natural language/i, /computer vision/i, /speech (?:recognition|ai)|voice ai/i, /conversational ai/i,
   /chat ?bots?/i, /recommend(?:ation|er) (?:system|engine)s?/i, /artificial intelligence/i,
 ];
@@ -71,6 +74,10 @@ const AI_JD_TERMS = [
   /fine[- ]?tun/i, /prompt engineering/i, /\bnlp\b|natural language processing/i, /computer vision|\bopencv\b/i,
   /\bagents?\b.*\b(?:ai|llm)|agentic|autogen|crewai/i, /openai|anthropic|claude|gpt-?4|gemini|llama/i,
   /scikit-learn|sklearn|xgboost|lightgbm/i, /model (?:training|serving|deployment|evaluation)/i,
+  /\bembeddings?\b/i, /re-?rank/i, /(?:semantic|hybrid) search/i, /\bguardrails?\b/i, /multi[- ]agent/i,
+  /model context protocol|\bMCP\b/, /\bllmops\b|llm (?:evaluation|orchestration|observability)/i,
+  /\bvllm\b|\bkserve\b|\bragas\b|trulens/i, /feature stores?|(?:model|data) drift/i,
+  /recommend(?:ation|er) (?:system|engine)s?|contextual bandits?/i, /foundation models?/i,
 ];
 
 // ── 3. Flags: drafted, but with a warning ────────────────────────────────────
@@ -91,19 +98,28 @@ const F2F = [
   /\b(?:on[\s-]?site|onsite)\s+(?:final\s+)?interviews?\b/i, /\binterview(?:s)?\s*(?:will be|is|:)?\s*(?:in[\s-]*person|on[\s-]?site|onsite)\b/i,
 ];
 
-// Java and Cloud/DevOps titles, for your Java (5, 7) and Cloud (6) resumes.
-// AI governance (folders 10/11) and AI/IAM product owner (folder 13) roles.
-const GOV_TITLE = /\b(?:ai|model|algorithmic)\s+(?:governance|risk|review|ethics|assurance|compliance)\b|responsible\s+ai|model\s+risk|governance\s+architect/i;
-const PO_TECH = /\b(?:ai|ml|llm|genai|agentic|machine learning|iam|identity(?:\s+and|\s+&)?\s+access|entra|azure ad|okta|sailpoint|zero trust|sso|oauth)\b/i;
-const JAVA_TITLE = [/\bjava\b/i, /\bj2ee\b/i, /\bspring(?:\s*boot)?\b/i, /\bfull[\s-]?stack\b/i, /\bback[\s-]?end\b/i, /\bmicroservices?\b/i];
-const JAVA_JD = [
-  /\bjava\b/i, /\bj2ee\b|\bjakarta\s+ee\b/i,
-  /\bspring\s*(?:boot|framework|mvc|security|cloud|data|webflux)\b/i,
-  /\bhibernate\b|\b(?:jpa|jdbc|jvm)\b/i,
-  /\b(?:servlet|jsp|tomcat|jboss|wildfly)\b/i,
+// A title that only uses AI as an adjective ("AI-assisted testing", "AI-enabled analytics", "AI tools")
+// is not an AI/ML role by title; such a posting must qualify through its JD instead.
+const INCIDENTAL_AI = new RegExp([
+  String.raw`\b(?:ai|ml|ai\/ml|aiml|genai|gen ai|llm)[\s-]+(?:assisted|enabled|native|powered|driven|based|augmented|infused|first|tools?|exposure|integration|experience|knowledge|skills?|literacy|awareness|adoption)\b`,
+  String.raw`\bwith\s+(?:some\s+)?(?:ai|ml|ai\/ml|aiml|genai|gen ai|llm)\b(?:\s+(?:exposure|experience|knowledge|skills?))?`,
+].join('|'), 'gi');
+
+// ── 2b. Off-lane titles: the title is anchored to a non-AI stack, so "AI" in it is a qualifier
+// ("Java Full Stack Lead (AI-LLM Integration)", ".NET Developer with AI", "AI Infra DevOps Engineer").
+// Skipped even when the title also says AI. Delete a line to let that lane back in.
+const OFF_LANE_TITLE = [
+  /\bjava\b/i, /\bj2ee\b/i, /\bspring\b/i, /\.net\b|\bdot\s?net\b|\bc#/i,
+  /\breact\b/i, /\bangular\b/i, /\bvue\b/i, /\bnode(?:\.?js)?\b/i, /front[\s-]?end/i, /\bui\b/i, /\bandroid\b/i,
+  /(?<!\bai[\s-]{0,3})\bfull[\s-]?stack\b(?![\s-]*ai\b)/i,         // "AI Full Stack" / "Full Stack AI" stay in
+  /dev[\s-]?ops/i, /\binfra(?:structure)?\b/i, /\bsre\b/i, /site reliability/i, /kubernetes|\bk8s\b/i,
+  /platform engineer/i, /cloud\s+(?:engineer|architect|admin|developer|ops)/i, /\bnetwork\b/i,
+  /\bsecurity\b/i, /\bsiem\b/i, /log ingestion/i, /\bdba\b/i, /\betl\b/i, /data engineer/i,
+  /governance|responsible ai|ai ethics|model risk|\bai risk\b|compliance/i,
+  /\banalytics\b/i, /\banalyst\b/i,
 ];
-const CLOUD_TITLE = [/\bcloud\b/i, /\bdev\s?ops\b/i, /\bdevsecops\b/i, /\bsre\b/i, /site reliability/i, /\bplatform engineer/i,
-  /\binfrastructure engineer/i, /\bkubernetes\b/i, /\bterraform\b/i, /\b(?:aws|azure|gcp)\s+(?:architect|engineer)\b/i, /\bsolutions?\s+architect\b/i];
+// A generic title needs to at least name a technical role before the JD is allowed to qualify it.
+const TECH_ROLE_TITLE = /\b(?:engineers?|developers?|programmers?|scientists?|researchers?|architects?|modelers?|leads?|specialists?|consultants?|experts?|smes?|mlops|llmops)\b/i;
 
 // Vendor blacklist (Vendors tab). A term matches the recruiter's email domain or address, the company
 // name, or appears as a phrase in the JD (e.g. "tanisha systems" in a gmail posting's signature).
@@ -141,26 +157,19 @@ export function classify(job) {
   if (f2f) return { keep: false, reason: `skip: face-to-face interview ("${both.match(f2f)[0].trim()}")`, flags: [] };
   if (CANDIDATE_SHEET.test(jd.slice(0, 4000))) return { keep: false, reason: 'skip: consultant profile sheet, not a job', flags: [] };
 
-  // An AI word in the title is enough. One only in the JD's opening lines ("AI-assisted engineering")
-  // also needs 2+ real AI/ML terms in the JD, so a network engineer who "uses AI tools" doesn't pass.
-  // Java and Cloud/DevOps roles are kept too (your folders 5, 7 and 6); the damage formula sends them the
-  // right resume.
+  // An AI/ML term in the title is sufficient ("Gen AI Engineer", "ML Engineer II", "AI/ML Lead").
+  // A generic technical title must show several distinct AI/ML technologies in the JD, so
+  // incidental mentions ("exposure to AI tools") do not pull in unrelated jobs.
+  const off = first(OFF_LANE_TITLE, title);
+  if (off) return { keep: false, reason: `off-lane title: "${title.match(off)[0].trim()}"`, flags: [] };
+
   const jdHits = AI_JD_TERMS.filter(re => re.test(jd)).length;
-  const titleHit = first(AI_TITLE, title);
-  const headHit = first(AI_TITLE, jd.slice(0, 400));
-  const javaHit = first(JAVA_TITLE, title);
-  const javaJdHit = first(JAVA_JD, jd);
-  const cloudHit = first(CLOUD_TITLE, title);
+  const aiTitle = title.replace(INCIDENTAL_AI, ' ');
+  const titleHit = first(AI_TITLE, aiTitle);
   let reason;
-  if (titleHit) reason = `AI/ML title ("${title.match(titleHit)[0].trim()}")`;
-  else if (headHit && jdHits >= 2) reason = `AI/ML role in JD ("${jd.slice(0, 400).match(headHit)[0].trim()}", ${jdHits} AI terms)`;
-  else if (jdHits >= 4) reason = `AI/ML JD (${jdHits} AI terms)`;
-  else if (javaHit) reason = `Java role ("${title.match(javaHit)[0].trim()}")`;
-  else if (javaJdHit) reason = `Java-related JD ("${jd.match(javaJdHit)[0].trim()}")`;
-  else if (cloudHit) reason = `Cloud/DevOps role ("${title.match(cloudHit)[0].trim()}")`;
-  else if (GOV_TITLE.test(title)) reason = `AI governance role ("${title.match(GOV_TITLE)[0].trim()}")`;
-  else if (/product owner/i.test(title) && PO_TECH.test(jd)) reason = `Technical product owner (AI/IAM: "${jd.match(PO_TECH)[0].trim()}")`;
-  else return { keep: false, reason: `not AI/ML, Java or Cloud (${jdHits} AI terms in JD)`, flags: [] };
+  if (titleHit) reason = `AI/ML title ("${aiTitle.match(titleHit)[0].trim()}")`;
+  else if (config.aiJdOnly && TECH_ROLE_TITLE.test(title) && jdHits >= config.minAiJdTerms) reason = `AI/ML JD (${jdHits} AI terms)`;
+  else return { keep: false, reason: `not an AI/ML role (${jdHits} AI terms in JD)`, flags: [] };
 
   const flags = FLAGS.filter(f => {
     const text = f.where === 'title' ? title : f.where === 'body' ? jd : both;

@@ -1,10 +1,11 @@
-Subject: {title} – {sender_name}
+Subject: {title}{subject_place} - {sender_name}
 ---
 {greeting}
 
+I am Raghava Boppudi, an AI/ML engineer with over 10 years across Data Engineering and automation workflows, with the last 3 years exclusively on ML workflows, RAG pipelines and Gen AI architectures. 
 I am interested in the {title} position{client_part}. {experience_line} {background_line}
 
-Currently on an H1B visa, open to C2C.
+Currently on an H1B visa, exploring C2C opportunities.
 
 {closing}
 
