@@ -16,6 +16,7 @@ import { listResumeFiles, resumeLabel } from './resumes.js';
 import { draftWarnings, lockFor, lockLabel, parseVendor, todaysFolder, weeklyCount } from './rules.js';
 import { isPriority, queueStatus, queuedInOrder } from './mailer.js';
 import { breakerState } from './pipeline.js';
+import { extractPhone } from './scraper.js';
 import { VENDOR_STATUSES, rematchStatus } from './actions.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -138,6 +139,7 @@ a.row:hover .lbl,.row.click:hover .lbl{color:var(--ink)}
 .row .ico svg.i{width:15px;height:15px}
 .chev{flex:none;width:7px;height:7px;margin:0 4px 0 2px;border:solid var(--ink3);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
 .row .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.row.warn-row{align-items:flex-start;padding:9px 0}.row.warn-row .dot{margin-top:5px}
 .row .dot.ring{background:transparent;box-shadow:inset 0 0 0 1.5px var(--accent)}
 .row .dot.grey{background:var(--ink3)}
 .empty-row{min-height:44px;display:flex;align-items:center;justify-content:center;color:var(--ink2);font:400 12px var(--font)}
@@ -436,7 +438,8 @@ async function cardAction(url, id, btn, doneText, confirmText){
   if (doneText) markDone(doneText); else openItem(current);
 }
 async function holdAction(id, decision, btn){
-  btn.disabled = true; const j = await post('/api/hold/' + id, {decision});
+  const sel = btn.closest('.draft')?.querySelector('select[name=resume_folder]');
+  btn.disabled = true; const j = await post('/api/hold/' + id, { decision, resume_folder: sel ? sel.value : '' });
   if (!j.ok) { alert(j.error); btn.disabled = false; return }
   if (decision === 'to_draft') openItem(current); else markDone('Back in the queue');
 }
@@ -617,6 +620,16 @@ function computeCounts() {
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
+// The recruiter's phone from the posting's signature, as a Settings-style row: tap to call, or copy.
+function phoneRow(job) {
+  const p = extractPhone(job.jd_text, job.recruiter_email);
+  if (!p) return '';
+  const [num, ext] = p.split(' ext. ');
+  const tel = `+1${num.replace(/\D/g, '')}${ext ? `,${ext}` : ''}`;
+  return `<div class="row"><label>Phone</label><span style="flex:1"></span><a class="val ink" href="tel:${tel}" title="Call">${esc(p)}</a>
+   <button class="small" onclick="navigator.clipboard.writeText('${esc(p)}');this.textContent='Copied';setTimeout(()=>this.textContent='Copy',1200)">Copy</button></div>`;
+}
+
 const ICON = {
   overview: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="9" width="4.5" height="4.5" rx="1.2"/>',
   review: '<path d="M2 9.5 4 3.5h8l2 6V13a.8.8 0 0 1-.8.8H2.8A.8.8 0 0 1 2 13z"/><path d="M2 9.5h3.5l1 1.6h3l1-1.6H14"/>',
@@ -749,17 +762,24 @@ function addJdForm() {
  <div class="row"><label for="m_title">Role</label><input id="m_title" placeholder="Read from the JD"></div>
  <div class="row"><label for="m_loc">Location</label><input id="m_loc" placeholder="Read from the JD"></div>
 </div>
-<div class="btnrow"><span class="msg meta" id="m_msg"></span><span class="sp"></span><button class="primary" onclick="addJd(this)">Create Draft</button></div>
+<div class="btnrow" style="align-items:flex-start"><span class="msg meta" id="m_msg" style="flex:1;min-width:0;white-space:normal"></span><span class="sp"></span><button class="primary" onclick="addJd(this)">Create Draft</button></div>
 <p class="foot">Rules that would skip an nvoids posting (W2-only, low match) show as warnings instead, since you chose this job.</p>
 <script>
-async function addJd(b){
+async function addJd(b, replace){
   const msg = document.getElementById('m_msg');
   b.disabled = true; msg.textContent = 'Matching resumes…';
   const j = await post('/api/manual', { jd_text: document.getElementById('m_jd').value, to_email: document.getElementById('m_to').value,
-                                        title: document.getElementById('m_title').value, location: document.getElementById('m_loc').value });
+                                        title: document.getElementById('m_title').value, location: document.getElementById('m_loc').value, replace: !!replace });
   b.disabled = false;
-  if (j.ok) location.href = '/manual?open=' + j.app_id;
-  else { msg.innerHTML = '<span class="err"></span>'; msg.querySelector('.err').textContent = j.error }
+  if (j.ok && !j.duplicate) { location.href = '/manual?open=' + j.app_id; return }
+  msg.innerHTML = '<span class="err"></span>'; msg.querySelector('.err').textContent = j.error || 'Failed';
+  // Same job already on file and not sent yet: offer to replace it (the earlier email is cancelled).
+  if (j.duplicate && j.replaceable) {
+    const r = document.createElement('button'); r.className = 'small'; r.textContent = 'Replace and Add';
+    r.title = 'Cancel #' + j.prior_id + ' and add this JD instead, matched against your current resumes';
+    r.onclick = () => { if (confirm('Cancel #' + j.prior_id + ' and use this JD instead? It becomes a new draft for you to approve.')) addJd(r, true) };
+    msg.append(' ', r);
+  }
 }
 </script>`;
 }
@@ -785,7 +805,7 @@ export function draftView(app, job) {
   const held = app.status === 'held';
   const opts = ranked.map(r => `<option value="${esc(r.folder)}" ${r.folder === app.resume_folder ? 'selected' : ''} ${lock && r.folder !== lock.resume_folder ? 'disabled' : ''}>${esc(r.name ?? resumeLabel(r.folder))} (${r.score}%${r === ranked[0] ? ', best' : ''}${lock && r.folder === lock.resume_folder ? ', locked' : ''})</option>`).join('');
   const holdButtons = {
-    same_day: [['use_today', `Use Today’s Resume`], ['tomorrow', 'Send Tomorrow']],
+    same_day: [['tomorrow', 'Send Tomorrow'], ['use_today', `Use Same Resume`], ['send_anyway_today', 'Send Anyway']],
     lock_edited: [['use_lock', 'Switch to Locked Resume']], lock_missing: [['retry', 'Retry']], job_details: [['to_draft', 'Edit the Email']],
     lock_low_fit: [['retry', 'Retry']], repost: [['send_anyway', 'Send Anyway']], weekly_cap: [['next_week', 'Send Next Week']],
     dry_run: [['retry', 'Queue Again']], blacklist: [], same_jd_edited: [['to_draft', 'Back to Draft']],
@@ -813,11 +833,12 @@ export function draftView(app, job) {
   ${held ? `<div class="callout"><div><b>Held.</b> ${esc(app.hold_reason)}</div></div>` : ''}
   ${app.status === 'failed' ? `<div class="callout"><div><b>Last send failed.</b> ${esc(app.error)}</div></div>` : ''}
  </div>
- ${warnings.length ? `<div class="grp"><details class="disc"><summary class="row"><span class="dot"></span><span class="lbl"><span>${warnings.length === 1 ? '1 warning' : `${warnings.length} warnings`}</span></span><span class="chev"></span></summary><div class="disc-body warnlist">${warnings.map(w => `<div>${esc(w)}</div>`).join('')}</div></details></div>` : ''}
+ ${warnings.length ? `<div class="section">${warnings.length === 1 ? 'Warning' : `${warnings.length} warnings`}</div><div class="grp">${warnings.map(w => `<div class="row warn-row"><span class="dot"></span><span class="lbl wrap"><div>${esc(w)}</div></span></div>`).join('')}</div>` : ''}
  <div class="section">Email</div>
  <div class="grp">
-  <div class="row"><label>Resume</label><span class="sp" style="flex:1"></span><span class="popup"><select name="resume_folder" ${dis}>${opts}</select></span></div>
+  <div class="row"><label>Resume</label><span class="sp" style="flex:1"></span><span class="popup"><select name="resume_folder">${opts}</select></span></div>
   <div class="row"><label>To</label><input name="to_email" value="${esc(app.to_email)}" ${dis}></div>
+  ${phoneRow(job)}
   <div class="row"><label>Cc</label><input name="cc_emails" value="${esc(cc)}" placeholder="None" ${dis}></div>
   <div class="row"><label>Subject</label><input name="subject" value="${esc(app.subject)}" ${dis}></div>
  </div>
@@ -827,7 +848,7 @@ export function draftView(app, job) {
   <details class="disc"><summary class="row"><span class="lbl"><span>Match details</span></span><span class="val kw-count">${matched.length} found, ${missing.length} missing</span><span class="chev"></span></summary>
    <div class="disc-body kw">${kwHtml(chosen)}</div></details>
   <script type="application/json" class="kw-data">${JSON.stringify(kwData).replace(/</g, '\\u003c')}</script>
-  <details class="disc jd"><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details>
+  <details class="disc jd" open><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details>
  </div>
 </div></div>
 <div class="draft-actions">${actions.join('')}</div></div>`;
@@ -846,13 +867,14 @@ export function emailView(app, job) {
 <div class="section">Email</div>
 <div class="grp">
  <div class="row"><span class="lbl"><span>To</span></span><span class="val">${esc(app.to_email)}</span></div>
+ ${phoneRow(job)}
  ${app.cc_emails ? `<div class="row"><span class="lbl"><span>Cc</span></span><span class="val">${esc(app.cc_emails.split(',').join(', '))}</span></div>` : ''}
  <div class="row"><span class="lbl"><span>Subject</span></span><span class="val ink" style="white-space:normal;text-align:right;max-width:70%">${esc(app.subject)}</span></div>
  <div class="row"><span class="lbl"><span>Resume</span></span><span class="val">${esc(resumeLabel(app.resume_folder))} · ${app.match_score ?? '?'}%</span></div>
 </div>
 <div class="section">Message</div>
 <div class="grp text"><pre>${esc(app.body)}</pre></div>
-<div class="grp" style="margin-top:20px"><details class="disc"><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details></div>
+<div class="grp" style="margin-top:20px"><details class="disc" open><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details></div>
 ${app.status === 'queued' ? `<div class="btnrow"><button onclick="simple('/api/cancel/${app.id}',{},this)">Pull Back from Queue</button></div>` : ''}`;
 }
 
@@ -980,6 +1002,7 @@ ${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder=
     <div class="row" data-addr="${esc(v.addr)}"><label>Status</label><span style="flex:1"></span><span class="popup"><select>${opts(s?.status)}</select></span>
      <input type="date" value="${esc(s?.on_date ?? '')}" style="flex:none;width:130px"><input placeholder="Note" value="${esc(s?.note ?? '')}" style="flex:none;width:160px"><button class="small" onclick="vsave(this)">Save</button></div>
     ${l ? '' : `<div class="row"><span class="lbl"><span>Resume lock</span><span class="sub">Always send this recruiter the same resume.</span></span><button class="small" onclick="lockPrefill('${esc(parseVendor(v.addr)?.domain ?? '')}')">Lock…</button></div>`}
+    <div class="row"><span class="lbl"><span>Block</span><span class="sub">Never email this address again. Its postings and unsent emails are skipped.</span></span><button class="small danger" onclick="blockAddr('${esc(v.addr)}',this)">Block…</button></div>
    </div></details>`; }).join('') || '<div class="empty-row">No recruiters yet. They appear after your first send.</div>'}</div>
 <div class="section">Resume locks <span class="aside">${locks.length}</span></div>
 <div class="grp">
@@ -997,10 +1020,12 @@ ${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder=
  ${black.map(b => `<div class="row"><span class="ico">${icon('block')}</span><span class="lbl"><span>${esc(b.term)}</span></span><button class="small" onclick="blrm(${b.id},this)">Remove</button></div>`).join('')}
  <div class="row"><input id="bl-term" placeholder="Domain, address or company name" style="text-align:left"><button class="small" onclick="bladd(this)">Block</button></div>
 </div>
-<p class="foot">Blocked recruiters are never emailed. Their postings are skipped and their open drafts are skipped now.</p>
+<p class="foot">An address blocks that one person; a domain (acme.com) blocks everyone there. Blocked recruiters are never emailed or CC'd, by any route: their postings, drafts and queued emails are skipped, and the final send refuses them.</p>
 <div class="grp" style="margin-top:20px"><details class="disc"><summary class="row"><span class="lbl"><span>Change history</span></span><span class="val">${audit.length}</span><span class="chev"></span></summary><div class="disc-body">
  ${audit.map(r => `<div class="meta" style="padding:3px 0">${esc(r.ts)} · ${esc(r.action)} · ${esc(String(r.detail).slice(0, 140))}</div>`).join('') || '<p class="meta">None.</p>'}</div></details></div>
 <script>
+async function blockAddr(addr, b){ if (!confirm('Block ' + addr + '? RUNE will never send them anything, and their unsent emails are skipped.')) return;
+  b.disabled = true; const j = await post('/api/blacklist', { term: addr }); if (j.ok) location.reload(); else { b.disabled = false; alert(j.error) } }
 async function bladd(b){ const t = document.getElementById('bl-term').value; if (!t.trim()) return; b.disabled = true;
   const j = await post('/api/blacklist', { term: t }); if (j.ok) { if (j.skipped) alert(j.skipped + ' open draft(s) from them were skipped.'); location.reload() } else { alert(j.error); b.disabled = false } }
 async function blrm(id, a){ if (!confirm('Unblock this recruiter?')) return; const j = await post('/api/blacklist/' + id + '/delete'); if (j.ok) location.reload(); else alert(j.error) }

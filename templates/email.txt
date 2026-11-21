@@ -2,12 +2,13 @@ Subject: {title}{subject_place} - {sender_name}
 ---
 {greeting}
 
-I am Raghava Boppudi, an AI/ML engineer with over 10 years across Data Engineering and automation workflows, with the last 3 years exclusively on ML workflows, RAG pipelines and Gen AI architectures. 
-I am interested in the {title} position{client_part}. {experience_line} {background_line}
+I am Raghava Boppudi, a Senior AI/ML Engineer with over 10 years across ML automation workflows and Data Engineering, with the last three exclusively catering to RAG pipelines, Gen AI architectures and ML workflows.
 
-Currently on an H1B visa, exploring C2C opportunities.
+I came across your requirement for {a_title}, and wanted to reach out. Find my resume attached for your reference. Would love to have a conversation with you to discuss further on how I might be the best fit for this role.
+Looking forward to hearing from you.
 
-{closing}
+Best,
 
-Best regards,
-{signature_block}
+Raghava Boppudi
+Senior AI ML Engineer | Agentic AI | RAG
++1 (408) 493-3044

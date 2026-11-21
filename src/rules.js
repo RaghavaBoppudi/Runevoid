@@ -184,7 +184,7 @@ export function draftWarnings(app, job) {
   const rp = findRepost(app, job);
   if (rp) w.push(`Repost: ${rp}. It will be held at send time.`);
   const tf = todaysFolder(app.to_email);
-  if (tf && tf !== app.resume_folder) w.push(`This vendor already got resume folder ${tf} today; sending folder ${app.resume_folder} will be held (same-day rule)`);
+  if (tf && tf !== app.resume_folder && !app.override_same_day) w.push(`This vendor already got your ${tf} resume today. It will be held so you can choose: Send Anyway, use the same resume, or send tomorrow`);
   const wk = weeklyCount(app.to_email);
   if (wk >= config.maxPerRecipientPerWeek) w.push(`This address already got ${wk} emails this week (limit ${config.maxPerRecipientPerWeek}); it will be held until next week`);
   else if (wk > 0) w.push(`This address got ${wk} email(s) from you this week`);
@@ -238,9 +238,9 @@ export function resolveForSend(app, job) {
   }
 
   const tf = todaysFolder(app.to_email);
-  if (tf && tf !== folder) {
+  if (tf && tf !== folder && !app.override_same_day) {
     return { action: 'hold', kind: 'same_day', todays_folder: tf,
-      reason: `${app.to_email} already got resume folder ${tf} today. A vendor never gets two different resumes on the same day.` };
+      reason: `${app.to_email} already got your ${tf} resume today. Send this one anyway with ${folder} (a different requirement), use the same resume, or send it tomorrow.` };
   }
 
   const wk = weeklyCount(app.to_email);

@@ -140,6 +140,7 @@ ensureColumns('jobs', {
 ensureColumns('applications', {
   auto_body: 'TEXT', flags_json: 'TEXT', thin: 'INTEGER NOT NULL DEFAULT 0', locked: 'INTEGER NOT NULL DEFAULT 0', cc_emails: 'TEXT',
   hold_kind: 'TEXT', hold_reason: 'TEXT', todays_folder: 'TEXT', override_repost: 'INTEGER NOT NULL DEFAULT 0',
+  override_same_day: 'INTEGER NOT NULL DEFAULT 0',   // you chose "Send Anyway": a second, different resume to this vendor today
   queued_at: 'TEXT', send_after: 'TEXT',
 });
 
@@ -182,4 +183,11 @@ export function updateApp(id, fields) {
   const keys = Object.keys(fields);
   db.prepare(`UPDATE applications SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
     .run(...keys.map(k => fields[k]), now(), id);
+}
+
+// One-time fix (Nov 2026): emails approved with a blank CC copied "no CC" into themselves, so a CC list saved
+// later never reached them. Unsent ones now follow the saved list (Status → Cc on every email) at send time.
+if (getState('cc_blank_migrated', '0') !== '1') {
+  db.prepare(`UPDATE applications SET cc_emails = NULL WHERE cc_emails = '' AND status IN ('draft','queued','held','failed')`).run();
+  setState('cc_blank_migrated', '1');
 }

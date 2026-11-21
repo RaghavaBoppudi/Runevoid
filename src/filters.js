@@ -142,6 +142,17 @@ export function blacklistHit(job) {
   return '';
 }
 
+// The address-only check used at the last step (deliver) and for CC lists: an address term blocks that address;
+// a domain or name term blocks every address at a matching domain.
+export function blockedAddress(address) {
+  const e = String(address ?? '').toLowerCase().trim(), d = e.split('@')[1] ?? '';
+  for (const term of blacklistTerms()) {
+    const t = term.toLowerCase().trim().replace(/^@/, '');
+    if (t && (t.includes('@') ? e === t : d.includes(t))) return term;
+  }
+  return '';
+}
+
 export function classify(job) {
   const title = job.title ?? '';
   const jd = cleanJd(job.jd_text ?? '');   // without nvoids' auto "Keywords:" line, which names AI terms on non-AI posts
@@ -149,6 +160,10 @@ export function classify(job) {
 
   const bl = blacklistHit(job);
   if (bl) return { keep: false, reason: `blacklisted vendor: ${bl}`, flags: [] };
+  // Bench sales: consultants (job seekers) advertising themselves, not requirements. They say "NOT FOR BENCH SALES"
+  // somewhere in the post (any case/spacing), or are titled "Hotlist".
+  const bench = /\bnot\s+(?:meant\s+)?for\s+bench[\s-]*sales?\b/i.exec(both) ?? /\bhot[\s-]?list\b/i.exec(title);
+  if (bench) return { keep: false, reason: `bench-sales post, not a requirement ("${bench[0].trim()}")`, flags: [] };
   const t = first(EXCLUDE_TITLE, title);
   if (t) return { keep: false, reason: `title skip: "${title.match(t)[0].trim()}"`, flags: [] };
   const e = first(EXCLUDE, both);

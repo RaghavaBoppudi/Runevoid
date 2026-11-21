@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { config, emailConfigured, ROOT } from './config.js';
 import { now, getState, setState, logEvent } from './db.js';
 import { familyForTitle } from './resumes.js';
+import { blockedAddress } from './filters.js';
 
 export const HISTORY_PATH = join(config.dataDir, 'Sent_History.md');
 
@@ -28,7 +29,9 @@ function fill(tpl, vars) {
 // Falls back to a first.last address ("princy.soni@…" → "Princy").
 function firstName(name, email) {
   const w = (name ?? '').trim().split(/\s+/)[0]?.replace(/[^A-Za-z'-]/g, '');
-  if (w && w.length > 1 && /^[A-Z]/.test(w)) return w[0] + w.slice(1).toLowerCase();
+  // "Sandhya", "sandhya" or "SANDHYA" → "Sandhya"; never a role word ("Hi Hr,", "Hi Team,").
+  if (w && w.length > 1 && /^[A-Za-z]/.test(w) && !/^(?:hr|team|recruiter|recruiters|recruiting|recruitment|admin|info|jobs|careers|hiring|talent|sales|support|staffing|contact|hello|dear|mr|ms|mrs)$/i.test(w))
+    return w[0].toUpperCase() + w.slice(1).toLowerCase();
   const m = /^([a-z]{3,12})[._]([a-z]{2,})@/i.exec(email ?? '');
   return m ? m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() : '';
 }
@@ -105,6 +108,9 @@ export function cleanTitle(t) {
     .replace(/artificial intelligence\s*(?:\(\s*AI\s*\)|,\s*AI\b)\s*/i, 'AI ')          // "Artificial Intelligence (AI) Consultant" → "AI Consultant"
     .replace(/\bAI_ML\b/gi, 'AI/ML')
     .replace(/\s+/g, ' ').trim();
+  // "Engineer, Machine Learning" / "Senior Scientist, Applied AI" → "Machine Learning Engineer" / "Senior Applied AI Scientist"
+  base = base.replace(/^((?:(?:senior|sr\.?|staff|lead|principal|junior|jr\.?)\s+)*)(engineer|scientist|developer|architect)\s*,\s*([^,|()]{2,40}?)(?=\s*(?:$|[|(–—-]))/i,
+    (m, lvl, noun, area) => area.split(/\s+/).length <= 4 && (AI_WORD.test(area) || /machine learning|deep learning|data science|computer vision|\bnlp\b|artificial intelligence/i.test(area)) ? `${lvl}${area.trim()} ${noun}` : m);
   base = base.replace(/\b([a-z])([a-z]+)\b/g, (w, a, b) => /^(?:consultant|engineer|architect|developer|scientist|lead|manager|analyst|specialist)$/.test(w) ? a.toUpperCase() + b : w);
 
   // Keep separators inside parentheses ("(GenAI | RAG)") out of the split; tidyPiece drops long parentheses anyway.
@@ -288,6 +294,16 @@ export function cityState(job) {
   return '';
 }
 
+// The article for a role as it is spoken: vowel sound → "an". Acronyms go by their first letter's name
+// (ML = "em-el" → an, FDE = "ef" → an, GenAI = "gen" → a).
+function articleFor(title) {
+  const w = String(title ?? '').trim().split(/[\s/-]+/)[0] ?? '';
+  if (/^[A-Z]{2,}/.test(w)) return /^[AEFHILMNORSX]/.test(w) ? 'an' : 'a';
+  if (/^(?:uni|use|usu|eu|one|once)/i.test(w)) return 'a';
+  if (/^(?:hour|honest|heir)/i.test(w)) return 'an';
+  return /^[aeiou]/i.test(w) ? 'an' : 'a';
+}
+
 // `chosen` is one entry of the resume ranking ({ folder, path, matched, background, … }). The skills
 // and background lines only name things found in BOTH the JD and that resume, so the email never claims
 // what the resume doesn't show.
@@ -332,6 +348,8 @@ export function buildDraft(job, chosen, { thin = false } = {}) {
     .filter(Boolean).join('\n');
   const vars = {
     title,
+    // "an AI Developer", "a Senior AI Engineer", "an ML Engineer", "an FDE": the article said aloud before the role.
+    a_title: `${articleFor(title)} ${title}`,
     // Locked: the job ID never appears in a recruiter email, and the location never appears in the body.
     // These stay empty even if a template asks for them.
     location: '', location_part: '', place_id: '', job_id: '',
@@ -434,6 +452,8 @@ export function getCcEmails() {
 
 export function setCcEmails(raw) {
   const unique = normalizeCcEmails(raw);
+  const blocked = unique.find(c => blockedAddress(c));
+  if (blocked) throw new Error(`${blocked} is on your Blocked list, so it can't be CC'd.`);
   setState('cc_emails', unique.join(','));
   logEvent('info', 'cc_updated', null, `Dashboard CC list updated (${unique.length} recipient${unique.length === 1 ? '' : 's'})`);
   return { emails: unique };
@@ -457,6 +477,12 @@ export function ccFor(to) {
 // `cc` defaults to CC_EMAILS; the test email passes [] so it only goes to you.
 export async function deliver({ to, subject, body, resumePath, cc = ccFor(to) }) {
   if (!emailConfigured()) throw new Error('Gmail is not configured — set GMAIL_USER and GMAIL_APP_PASSWORD in .env');
+  // Last line of defence for the Blocked list (Vendors tab): every email goes through here, so nothing — a held
+  // email's Send Anyway, an edited To, a test, a path added later — can reach a blocked address.
+  const blockedTo = blockedAddress(to);
+  if (blockedTo) throw new Error(`Not sent: ${to} is on your Blocked list (“${blockedTo}”).`);
+  const droppedCc = cc.filter(c => blockedAddress(c));
+  if (droppedCc.length) { cc = cc.filter(c => !blockedAddress(c)); logEvent('warn', 'blocked_cc', null, `Left blocked address(es) out of CC: ${droppedCc.join(', ')}`); }
   if (!existsSync(resumePath)) throw new Error(`Resume file is missing: ${resumePath}`);
   assertNoSourceMention(subject, body);
   const info = await getTransport().sendMail({
@@ -484,7 +510,7 @@ export function appendHistory(app, job) {
   const jd = (job.jd_text ?? '').replace(/```/g, "'''");
   const entry = `${header}## ${app.sent_at ?? now()} — ${job.title}
 
-- **To:** ${app.to_email}${job.recruiter_name ? ` (${job.recruiter_name}${job.company ? `, ${job.company}` : ''})` : ''}${ccFor(app.to_email).length ? `\n- **CC:** ${ccFor(app.to_email).join(', ')}` : ''}
+- **To:** ${app.to_email}${job.recruiter_name ? ` (${job.recruiter_name}${job.company ? `, ${job.company}` : ''})` : ''}${(() => { const cc = app.cc_emails === null || app.cc_emails === undefined ? ccFor(app.to_email) : app.cc_emails.split(',').filter(Boolean); return cc.length ? `\n- **CC:** ${cc.join(', ')}` : ''; })()}
 - **Resume folder:** ${app.resume_folder} (${app.match_score ?? '?'}% match) — \`${app.resume_path}\`
 - **Location:** ${app.location || job.location_listed || 'unknown'}
 - **Approved:** ${app.approved_at ?? ''} · **Sent:** ${app.sent_at ?? ''}

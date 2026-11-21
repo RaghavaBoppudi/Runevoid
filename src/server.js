@@ -201,7 +201,7 @@ export function startServer() {
   }));
   app.post('/api/cancel/:id', ok(req => { cancelQueued(req.params.id); }));
   app.post('/api/edit-queued/:id', ok(req => { editQueued(req.params.id, req.body ?? {}); }));
-  app.post('/api/hold/:id', ok(req => { resolveHold(req.params.id, String(req.body?.decision ?? '')); }));
+  app.post('/api/hold/:id', ok(req => { resolveHold(req.params.id, String(req.body?.decision ?? ''), req.body?.resume_folder ? String(req.body.resume_folder) : undefined); }));
   app.post('/api/locks', ok(req => { setLock(req.body ?? {}); }));
   app.post('/api/locks/:id/delete', ok(req => { removeLock(req.params.id); }));
   app.post('/api/vendor-status', ok(req => { setVendorStatus(req.body ?? {}); }));

@@ -45,11 +45,15 @@ export function queuedInOrder() {
   expireStale();
   const rows = db.prepare(`SELECT a.*, j.posted_utc, j.source FROM applications a JOIN jobs j ON j.id = a.job_id
                            WHERE a.status = 'queued' AND (a.send_after IS NULL OR a.send_after <= ?) ORDER BY a.queued_at, a.id`).all(now());
-  return rows.map(r => ({ ...r, priority: isPriority(r) })).sort((a, b) => Number(b.priority) - Number(a.priority) || (b.priority ? String(b.posted_utc ?? '').localeCompare(String(a.posted_utc ?? '')) : 0));
+  const manual = r => Number(r.source === 'manual');   // JDs you checked yourself jump the whole queue
+  return rows.map(r => ({ ...r, priority: isPriority(r) })).sort((a, b) => manual(b) - manual(a) || Number(b.priority) - Number(a.priority) || (b.priority ? String(b.posted_utc ?? '').localeCompare(String(a.posted_utc ?? '')) : 0));
 }
 
 // When may the next email go? (epoch ms; 0 = now)
 const gate = (priority) => Number(getState(priority ? 'pace_priority_after' : 'pace_normal_after', '0'));
+// Manual JDs: a fixed short gap between them so a batch of approvals doesn't go out as one burst.
+const MANUAL_GAP_MS = 20_000;
+const manualGate = () => Number(getState('pace_manual_after', '0'));
 
 function nextForCap(queue, sent, cap) {
   const first = queue[0];
@@ -63,7 +67,7 @@ export function queueStatus() {
   const sent = dailyCapSentTodayCount();
   const cap = dailyCap();
   const next = nextForCap(q, sent, cap);
-  const nextAt = next ? Math.max(Date.now(), gate(next.priority)) : null;
+  const nextAt = next ? (next.source === 'manual' ? Math.max(Date.now(), manualGate()) : Math.max(Date.now(), gate(next.priority))) : null;
   return { paused: sendingPaused(), queued: q.length, waitingLater, nextAt, nextIsPriority: Boolean(next?.priority),
     sentToday: sentTodayCount(), dailyCapSentToday: sent, cap, dryRun: config.dryRun };
 }
@@ -88,7 +92,8 @@ async function sendNext() {
     }
     return;
   }
-  if (Date.now() < gate(next.priority)) return;   // still inside the pacing gap
+  // Manual JDs skip the nvoids pacing gap; they only wait 20 s after the previous manual send.
+  if (Date.now() < (next.source === 'manual' ? manualGate() : gate(next.priority))) return;   // still inside the pacing gap
 
   const app = getApp(next.id);
   const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(app.job_id);
@@ -136,9 +141,12 @@ async function sendNext() {
     try { appendHistory(getApp(a.id), job); }
     catch (e) { logEvent('error', 'history_failed', a.job_id, `Sent, but could not write Sent_History.md: ${e.message}`); }
 
-    // Pick the next gaps now, so the dashboard can count down.
-    setState('pace_normal_after', Date.now() + rand(config.paceMinSeconds, config.paceMaxSeconds));
-    setState('pace_priority_after', Date.now() + rand(config.priorityPaceMinSeconds, config.priorityPaceMaxSeconds));
+    // Pick the next gaps now, so the dashboard can count down. Manual sends don't touch the nvoids pacing.
+    if (next.source === 'manual') setState('pace_manual_after', Date.now() + MANUAL_GAP_MS);
+    else {
+      setState('pace_normal_after', Date.now() + rand(config.paceMinSeconds, config.paceMaxSeconds));
+      setState('pace_priority_after', Date.now() + rand(config.priorityPaceMinSeconds, config.priorityPaceMaxSeconds));
+    }
   } catch (e) {
     updateApp(a.id, { status: 'failed', error: e.message });
     setJobStatus(a.job_id, 'failed', e.message);

@@ -5,7 +5,7 @@ import { listResumeFiles, rankResumes } from './resumes.js';
 import { config } from './config.js';
 import { buildDraft, assertNoSourceMention, assertNoJobDetails, normalizeCcEmails, ccFor } from './email.js';
 import { lockFor, lockLabel, parseVendor, tomorrow, nextMonday } from './rules.js';
-import { blacklistHit, classify } from './filters.js';
+import { blacklistHit, blockedAddress, classify } from './filters.js';
 
 const jobOf = (app) => db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(app.job_id);
 
@@ -16,6 +16,17 @@ function mustGet(id) {
 }
 
 // Switch a draft to another resume folder. Rewrites the text unless you've edited it.
+// CC for one email. If it is just your saved CC list (Status → Cc on every email), store null: the list is then
+// read at send time, so changing it later reaches emails already in the queue. Only a CC you changed on this
+// email is kept as its own.
+function ccToStore(raw, to) {
+  if (raw === null || raw === undefined) return null;
+  const mine = normalizeCcEmails(String(raw)).filter(c => c.toLowerCase() !== to.toLowerCase());
+  const def = ccFor(to);
+  const same = mine.length === def.length && mine.every(c => def.some(d => d.toLowerCase() === c.toLowerCase()));
+  return same ? null : mine.join(',');
+}
+
 function switchResume(app, folder) {
   const file = listResumeFiles().find(f => f.folder === String(folder));
   if (!file) throw new Error(`Resume folder ${folder} not found`);
@@ -38,6 +49,8 @@ export function approve(id, edits = {}) {
   if (!['draft', 'failed', 'held'].includes(app.status)) throw new Error(`Can't approve: it is ${app.status}`);
   const to = String(edits.to_email ?? app.to_email).trim();
   if (!parseVendor(to)) throw new Error(`Bad recipient address: ${to}`);
+  const bl = blacklistHit({ ...jobOf(app), recruiter_email: to });
+  if (bl) throw new Error(`${to} is on your Blocked list (“${bl}”). It can't be approved; skip it instead.`);
 
   const lock = lockFor(to);
   const wanted = String(edits.resume_folder ?? app.resume_folder);
@@ -48,7 +61,7 @@ export function approve(id, edits = {}) {
 
   const fields = { to_email: to, status: 'queued', queued_at: now(), approved_at: now(), hold_kind: null, hold_reason: null, todays_folder: null, error: null };
   if (edits.subject !== undefined) fields.subject = String(edits.subject);
-  fields.cc_emails = normalizeCcEmails(edits.cc_emails !== undefined ? String(edits.cc_emails) : (app.cc_emails ?? ccFor(to).join(','))).filter(c => c.toLowerCase() !== to.toLowerCase()).join(',');
+  fields.cc_emails = ccToStore(edits.cc_emails !== undefined ? String(edits.cc_emails) : app.cc_emails, to);
   if (edits.body !== undefined) fields.body = String(edits.body);
   assertNoSourceMention(fields.subject ?? app.subject, fields.body ?? app.body);
   assertNoJobDetails(jobOf(app), fields.subject ?? app.subject, fields.body ?? app.body);
@@ -65,9 +78,10 @@ export function editQueued(id, edits = {}) {
   if (app.status !== 'queued') throw new Error(`It is ${app.status}, not queued — it may have just been sent`);
   const to = String(edits.to_email ?? app.to_email).trim();
   if (!parseVendor(to)) throw new Error(`Bad recipient address: ${to}`);
+  if (blockedAddress(to)) throw new Error(`${to} is on your Blocked list.`);
   const fields = { to_email: to };
   if (edits.subject !== undefined) fields.subject = String(edits.subject);
-  if (edits.cc_emails !== undefined) fields.cc_emails = normalizeCcEmails(String(edits.cc_emails)).filter(c => c.toLowerCase() !== to.toLowerCase()).join(',');
+  if (edits.cc_emails !== undefined) fields.cc_emails = ccToStore(String(edits.cc_emails), to);
   if (edits.body !== undefined) fields.body = String(edits.body);
   assertNoSourceMention(fields.subject ?? app.subject, fields.body ?? app.body);
   assertNoJobDetails(jobOf(app), fields.subject ?? app.subject, fields.body ?? app.body);
@@ -105,7 +119,7 @@ export function addBlacklist({ term, note = '' }) {
   db.prepare(`INSERT INTO vendor_blacklist (term, note, created_at) VALUES (?, ?, ?) ON CONFLICT(term) DO UPDATE SET note = excluded.note`).run(t, String(note).slice(0, 300), now());
   audit('blacklist_added', { term: t, note });
   let skipped = 0;
-  const open = db.prepare(`SELECT a.id, a.job_id, a.to_email, j.title, j.jd_text, j.company FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.status IN ('draft','held','failed')`).all();
+  const open = db.prepare(`SELECT a.id, a.job_id, a.to_email, j.title, j.jd_text, j.company FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.status IN ('draft','held','failed','queued')`).all();
   for (const a of open) {
     if (blacklistHit({ ...a, recruiter_email: a.to_email })) {
       updateApp(a.id, { status: 'skipped', error: `blacklisted vendor: ${t}` });
@@ -141,9 +155,16 @@ export function skip(id) {
 }
 
 // Decisions on a HELD email.
-export function resolveHold(id, decision) {
-  const app = mustGet(id);
+// folder: the resume you picked in the held email's Resume menu (applied first, so the decision uses it).
+export function resolveHold(id, decision, folder) {
+  let app = mustGet(id);
   if (app.status !== 'held') throw new Error(`It is ${app.status}, not held`);
+  if (folder && folder !== app.resume_folder && !['use_today', 'use_lock'].includes(decision)) {
+    const lock = lockFor(app.to_email);
+    if (lock && lock.resume_folder !== folder) throw new Error(`This vendor is locked to ${lock.resume_folder}`);
+    app = switchResume(app, folder);
+    logEvent('info', 'resume_switched', app.job_id, `Held email: resume changed to ${folder}`);
+  }
   const requeue = (extra = {}, why) => {
     updateApp(app.id, { status: 'queued', queued_at: now(), hold_kind: null, hold_reason: null, todays_folder: null, ...extra });
     setJobStatus(app.job_id, 'queued', why);
@@ -167,6 +188,7 @@ export function resolveHold(id, decision) {
     case 'tomorrow':     return requeue({ send_after: tomorrow() }, `send tomorrow (${tomorrow()})`);
     case 'next_week':    return requeue({ send_after: nextMonday() }, `send next week (${nextMonday()})`);
     case 'send_anyway':  return requeue({ override_repost: 1 }, 'send anyway (you confirmed it is not a repost)');
+    case 'send_anyway_today': return requeue({ override_same_day: 1 }, `send anyway: a second resume (${app.resume_folder}) to this vendor today`);
     case 'retry':        return requeue({}, 'retry');
     case 'to_draft': {   // back to an editable draft (e.g. to remove a job ID/location you typed in)
       updateApp(app.id, { status: 'draft', queued_at: null, hold_kind: null, hold_reason: null, todays_folder: null });

@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { config } from './config.js';
 import { fetchNewListings, fetchJobDetail, fetchListingPage } from './scraper.js';
-import { classify, isAdvert } from './filters.js';
+import { classify, isAdvert, blacklistHit } from './filters.js';
 import { rankResumes } from './resumes.js';
 import { buildDraft } from './email.js';
 import { lockFor, lockLabel, sameJdAtVendor } from './rules.js';
@@ -98,6 +98,8 @@ export async function applyAnyway(id) {
   const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(Number(id));
   if (!job || job.status !== 'low_match') throw new Error('This posting is not in the low-fit list');
   if (!job.recruiter_email) throw new Error('This posting has no recruiter email');
+  const bl = blacklistHit(job);
+  if (bl) throw new Error(`${job.recruiter_email} is on your Blocked list (“${bl}”)`);
   const existing = db.prepare(`SELECT id FROM applications WHERE job_id = ?`).get(job.id);
   if (existing) throw new Error('This posting already has a draft or email');
   const verdict = classify(job);

@@ -207,3 +207,31 @@ export async function fetchNewListings(sinceId) {
   }
   return fresh;
 }
+
+// ── Recruiter phone ─────────────────────────────────────────────────────────
+// nvoids has no phone field: the number sits in the recruiter's signature ("Desk: 4694293555 EXT - 1023",
+// "Phone: | +1 (703) 689-9945 Ext. 101", "D: (205) 510-7432", "O 832.632.9328"). Picks one US number:
+// labelled ones (Phone/Desk/Direct/Tel/Mobile/…) and ones near the recruiter's email first; never a fax.
+// Returns "(469) 429-3555 ext. 1023", or '' when there is none.
+const PHONE_RE = /(?<![A-Za-z0-9_.@\/=&-])(?:\+?\s*1[\s.\-|]*)?\(?\s*([2-9]\d{2})\s*\)?[\s.\-|]*(\d{3})[\s.\-|]*(\d{4})(?![\dA-Za-z_])(?:[\s|]*(?:ext\.?|extn|x|#|\*)[\s.:\-|]*(\d{1,5}))?/gi;
+export function extractPhone(text, email = '') {
+  // links, file names and long ids are blanked out (same length, so positions still line up)
+  const t = String(text ?? '').replace(/\r/g, '').replace(/\b(?:https?:\/\/|www\.)\S+|\S+\.(?:jpe?g|png|gif|pdf|docx?)\b|\b\w*[A-Za-z]\w*\d{6,}\w*\b|\b\d{11,}\b/gi, m => ' '.repeat(m.length));
+  const at = email ? t.toLowerCase().indexOf(String(email).toLowerCase()) : -1;
+  let best = null;
+  for (const m of t.matchAll(PHONE_RE)) {
+    const before = t.slice(Math.max(0, m.index - 28), m.index).toLowerCase();
+    if (/(?:fax|\bf)\s*(?:no\.?|#)?\s*[:.\-]?\s*[|\s]*(?:\+?\s*1)?\s*[|\s]*$/.test(before)) continue;                       // "Fax: 631-…", "f:(704)…"
+    if (/\+\s*9\s*1[\s\-|]*$/.test(t.slice(Math.max(0, m.index - 5), m.index))) continue;   // +91 (India) mobile
+    if (/(?:zip|suite|ste\.?|#)\s*$/.test(before) && !m[4]) continue;
+    let score = 0;
+    if (/(?:phone|ph|desk|direct|tel|telephone|mobile|mob|cell|contact|work|call|reach|whatsapp|number|\bd|\bp|\bm|\bc|\bo|\bv)\s*(?:no\.?|num|#)?\s*[:.\-]?\s*[|\s]*(?:\+?\s*1)?\s*[|\s]*$/.test(before)) score += 3;
+    if (/desk|direct/.test(before)) score += 1;
+    if (at >= 0 && Math.abs(m.index - at) < 400) score += 2;
+    score += m.index / Math.max(1, t.length);                                       // signatures sit at the end
+    if (!best || score > best.score) best = { score, m };
+  }
+  if (!best) return '';
+  const [, a, b, c, ext] = best.m;
+  return `(${a}) ${b}-${c}${ext ? ` ext. ${ext}` : ''}`;
+}
