@@ -65,7 +65,7 @@ export const config = {
 
   dataDir: process.env.DATA_DIR || join(ROOT, 'data'),
   baseUrl: 'https://nvoids.com',
-  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) nvoids-personal-bot/0.2 (single user, 1 req/min)',
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Runevoid/0.2 (single user, 1 req/min)',
 };
 
 mkdirSync(config.dataDir, { recursive: true });

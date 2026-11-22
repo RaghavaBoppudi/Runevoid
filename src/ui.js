@@ -1,4 +1,4 @@
-// RUNE dashboard — everything that draws a page. server.js only routes requests here.
+// Runevoid dashboard — everything that draws a page. server.js only routes requests here.
 //
 // Layout (standard app-shell / master-detail dashboard):
 //   header  — logo, top tabs, search, controls
@@ -7,312 +7,48 @@
 //     Review / Manual: a list bar on the left (New postings → Needs fixing → Standard), the chosen draft in
 //     the work area, JD under the email, Approve/Skip pinned to the bottom. Keyboard: j/k ↑/↓ move,
 //     a approve, s skip, r re-match, x select, / filter.
-// Theme: a macOS System Settings window, centred on the page. Sidebar (search, profile, icon rows), toolbar with
-// back/forward and the pane title, grouped rows, popup buttons, switches. Review and Manual push a draft over the list.
+// Theme: a 1-bit desktop window on a muddy-orange desk (public/runevoid.css). Title bar, an outline sidebar,
+// boxed cards with hard shadows, keys that sink when pressed. Mechanical click sounds come from public/clicks.js.
+// Review and Manual push a draft over the list.
 import { config, emailConfigured, dailyCap, ROOT } from './config.js';
-import { db, getState } from './db.js';
+import { db, getState, DB_PATH } from './db.js';
 import { ccFor, getCcEmails, HISTORY_PATH } from './email.js';
 import { listResumeFiles, resumeLabel } from './resumes.js';
-import { draftWarnings, lockFor, lockLabel, parseVendor, todaysFolder, weeklyCount } from './rules.js';
+import { draftWarnings, lockFor, lockLabel, parseVendor } from './rules.js';
 import { isPriority, queueStatus, queuedInOrder } from './mailer.js';
 import { breakerState } from './pipeline.js';
 import { extractPhone } from './scraper.js';
 import { VENDOR_STATUSES, rematchStatus } from './actions.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
+// Styles live in public/runevoid.css; the browser scripts (theme, click sounds, scrollbars) in public/*.js. Their URLs carry a hash of the
+// file, so a changed file is fetched fresh even though /static is cached for a week.
 
-const CSS = `
-/* ── macOS System Settings, as a web page ─────────────────────────────────────────────────────────
-   Measured from System Settings on macOS 26: 232pt sidebar, 28pt capsule search, 32pt sidebar rows with
-   10pt-radius selection, 52pt toolbar with a back/forward capsule, 12pt-radius grouped rows (38pt, 10pt
-   insets, hairline separators), up/down popup buttons, compact switches, hero header per pane.
-   Accent: one orange, used only where macOS uses the accent colour (switch on, default button, badges, focus). */
-:root{
-  color-scheme:light dark;
-  --accent:#ff5b00;--accent2:var(--accent);--on-accent:#fff;--tint:rgba(255,91,0,.12);
-  --page:#dedee3;--win:#f6f6f6;--side:#e9e9eb;--group:rgba(0,0,0,.035);--group-edge:rgba(0,0,0,.05);
-  --ink:#1d1d1f;--ink2:rgba(0,0,0,.55);--ink3:rgba(0,0,0,.32);--muted:var(--ink2);--faint:var(--ink3);
-  --sep:rgba(0,0,0,.08);--line:var(--sep);--line2:rgba(0,0,0,.14);
-  --fill:rgba(0,0,0,.05);--fill2:rgba(0,0,0,.075);--fill-hover:rgba(0,0,0,.09);--sel:rgba(0,0,0,.085);
-  --field:rgba(0,0,0,.045);--knob:#fff;--track:rgba(0,0,0,.12);
-  --ok:var(--ink);--warn:var(--accent);--bad:#e0352b;--coral:var(--accent);
-  --shadow:0 0 0 .5px rgba(0,0,0,.18),0 24px 70px rgba(0,0,0,.22),0 6px 18px rgba(0,0,0,.08);
-  --ring:0 0 0 3px rgba(255,91,0,.35);--glow:var(--ring);
-  --font:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Helvetica Neue','Segoe UI',system-ui,sans-serif;
-  --head:var(--font);--body:var(--font);--mono:var(--font);
-  --sidebar:240px}
-@media (prefers-color-scheme:dark){:root{
-  --accent:#ff6a14;--tint:rgba(255,106,20,.18);
-  --page:#000;--win:#1e1e1e;--side:#2a2a2a;--group:rgba(255,255,255,.045);--group-edge:rgba(255,255,255,.04);
-  --ink:#f2f2f2;--ink2:rgba(255,255,255,.55);--ink3:rgba(255,255,255,.32);
-  --sep:rgba(255,255,255,.075);--line2:rgba(255,255,255,.13);
-  --fill:rgba(255,255,255,.07);--fill2:rgba(255,255,255,.1);--fill-hover:rgba(255,255,255,.14);--sel:rgba(255,255,255,.1);
-  --field:rgba(255,255,255,.07);--knob:#f2f2f2;--track:rgba(255,255,255,.14);--bad:#ff5f57;
-  --shadow:0 0 0 .5px rgba(255,255,255,.12),0 24px 70px rgba(0,0,0,.7)}}
-
-*{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;display:flex;align-items:center;justify-content:center;padding:32px;background:var(--page);color:var(--ink);
-  font:400 13px/1.38 var(--font);letter-spacing:-.003em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden}
-a{color:var(--accent);text-decoration:none}
-b,strong{font-weight:600}
-h1,h2,h3,h4,p{margin:0}
-::selection{background:var(--tint)}
-svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-
-/* ── Window ─────────────────────────────────────────────────────────── */
-.window{position:relative;display:flex;width:min(1080px,100%);height:min(840px,100%);border-radius:26px;overflow:hidden;background:var(--win);box-shadow:var(--shadow)}
-
-/* sidebar */
-.sidebar{flex:none;width:var(--sidebar);display:flex;flex-direction:column;background:var(--side);border-right:1px solid var(--sep)}
-.titlebar{flex:none;height:52px;display:flex;align-items:center;padding:0 20px}
-.lights{display:flex;gap:8px}
-.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.12)}
-.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
-.sb-search{flex:none;margin:0 10px 8px;position:relative}
-.sb-search input{width:100%;height:28px;padding:0 10px 0 30px;border:0;border-radius:14px;background:var(--fill2);color:var(--ink);font:400 13px var(--font);outline:none}
-.sb-search input::placeholder{color:var(--ink2)}
-.sb-search input:focus{box-shadow:var(--ring)}
-.sb-search svg{position:absolute;left:10px;top:6px;color:var(--ink2)}
-.sb-scroll{flex:1;overflow-y:auto;padding:4px 10px 16px;scrollbar-width:none}
-.sb-profile{display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:12px;border-radius:10px;color:var(--ink);text-decoration:none}
-.sb-profile:hover{background:var(--fill)}
-.sb-profile.on{background:var(--sel)}
-.avatar{width:38px;height:38px;flex:none;border-radius:50%;display:grid;place-items:center;background:linear-gradient(160deg,#ff8a3d,#ff5b00);color:#fff;font:700 15px/1 var(--font);letter-spacing:.04em}
-.sb-profile b{display:block;font:600 13px/1.25 var(--font)}
-.sb-profile small{display:block;font:400 11px/1.3 var(--font);color:var(--ink2)}
-.sb-group{display:flex;flex-direction:column;gap:0;margin-bottom:12px}
-.sb-item{display:flex;align-items:center;gap:10px;height:32px;padding:0 8px 0 9px;border-radius:10px;color:var(--ink);text-decoration:none;font:400 13px var(--font)}
-.sb-item:hover{background:var(--fill)}
-.sb-item.on{background:var(--sel)}
-.sb-item svg.i{opacity:.82}
-.sb-item b{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;background:var(--accent);color:var(--on-accent);font:600 11px/18px var(--font);text-align:center}
-
-/* content column */
-.content{flex:1;min-width:0;display:flex;flex-direction:column}
-.toolbar{flex:none;height:52px;display:flex;align-items:center;gap:12px;padding:0 16px 0 10px;border-bottom:1px solid var(--sep)}
-.navbtns{display:flex;align-items:center;height:34px;padding:0 4px;border-radius:17px;background:var(--fill);box-shadow:inset 0 0 0 .5px var(--group-edge)}
-.navbtns button{width:30px;height:28px;padding:0;border:0;border-radius:14px;background:transparent;color:var(--ink2);display:grid;place-items:center;cursor:pointer}
-.navbtns button,.navbtns button:hover,.navbtns button:active{box-shadow:none;filter:none}
-.navbtns button:hover{color:var(--ink);background:transparent}
-.navbtns button:focus-visible{box-shadow:none;color:var(--accent)}
-.navbtns span{width:1px;height:16px;background:var(--line2)}
-.tb-title{font:600 15px/1 var(--font);letter-spacing:-.01em;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tb-right{margin-left:auto;display:flex;align-items:center;gap:8px;font:400 12px var(--font);color:var(--ink2);white-space:nowrap}
-.tb-right b{color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums}
-.scroller{flex:1;min-height:0;overflow-y:auto;padding:20px 20px 28px}
-.pagewrap{max-width:680px;margin:0 auto}
-.pagewrap.wide{max-width:none}
-
-/* ── Hero (top of each pane) ───────────────────────────────────────── */
-.hero{display:flex;flex-direction:column;align-items:center;text-align:center;padding:22px 24px 20px;margin-bottom:10px;border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge)}
-.hero-icon{width:52px;height:52px;border-radius:13px;display:grid;place-items:center;margin-bottom:10px;background:var(--fill2);box-shadow:inset 0 0 0 .5px var(--line2)}
-.hero-icon svg.i{width:28px;height:28px;stroke-width:1.4}
-.hero-icon.accent{background:linear-gradient(160deg,#ff8a3d,#ff5b00);color:#fff;box-shadow:none}
-.hero h2{font:700 22px/1.2 var(--font);letter-spacing:-.02em;margin-bottom:4px}
-.hero p{font:400 12px/1.45 var(--font);color:var(--ink2);max-width:440px}
-
-/* ── Grouped rows ──────────────────────────────────────────────────── */
-.section{font:700 13px/1 var(--font);margin:20px 10px 8px}
-.section:first-child{margin-top:4px}
-.section .aside{float:right;font-weight:400;color:var(--ink2)}
-.grp{border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge);padding:0 10px;margin-bottom:10px}
-.row{position:relative;display:flex;align-items:center;gap:10px;min-height:38px;padding:7px 0;color:var(--ink);text-decoration:none}
-.row+.row::before,.row+details>.row::before,details+.row::before,details+details>.row::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;background:var(--sep)}
-.row.tall{min-height:52px}
-a.row:hover,.row.click:hover{cursor:pointer}
-a.row:hover .lbl,.row.click:hover .lbl{color:var(--ink)}
-.row .lbl{flex:1;min-width:0}
-.row .lbl>div:first-child,.row .lbl>span:first-child{display:block;font:400 13px/1.35 var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .lbl.wrap>div:first-child{white-space:normal}
-.row .sub{display:block;font:400 11px/1.4 var(--font);color:var(--ink2);margin-top:1px;overflow:hidden;text-overflow:ellipsis}
-.row .sub.one{white-space:nowrap}
-.row .lbl a{color:var(--ink)}.row .lbl a:hover{color:var(--accent)}
-.row .sub.clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.row .val{flex:none;color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}
-.row .val.ink{color:var(--ink)}
-.row .ico{width:26px;height:26px;flex:none;border-radius:7px;display:grid;place-items:center;background:var(--fill2);color:var(--ink)}
-.row .ico svg.i{width:15px;height:15px}
-.chev{flex:none;width:7px;height:7px;margin:0 4px 0 2px;border:solid var(--ink3);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
-.row .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent)}
-.row.warn-row{align-items:flex-start;padding:9px 0}.row.warn-row .dot{margin-top:5px}
-.row .dot.ring{background:transparent;box-shadow:inset 0 0 0 1.5px var(--accent)}
-.row .dot.grey{background:var(--ink3)}
-.empty-row{min-height:44px;display:flex;align-items:center;justify-content:center;color:var(--ink2);font:400 12px var(--font)}
-.foot{font:400 11px/1.45 var(--font);color:var(--ink2);margin:6px 10px 0}
-.meta{font:400 11px/1.4 var(--font);color:var(--ink2)}
-.ok{color:var(--ink)}.bad,.err{color:var(--bad)}.warn{color:var(--accent)}
-
-/* status glyphs (Status pane) */
-.st{flex:none;width:20px;height:20px;border-radius:50%;position:relative}
-.st.ok{background:var(--fill2)}
-.st.ok::after{content:"";position:absolute;left:7px;top:4px;width:4px;height:8px;border:solid var(--ink);border-width:0 1.6px 1.6px 0;transform:rotate(45deg);opacity:.75}
-.st.bad{background:var(--bad)}
-.st.bad::after,.st.warn::after{content:"!";position:absolute;inset:0;display:grid;place-items:center;font:700 12px/20px var(--font);color:#fff;text-align:center}
-.st.warn{background:var(--accent)}
-
-/* ── Controls ──────────────────────────────────────────────────────── */
-input,select,textarea{font:400 13px var(--font);color:var(--ink)}
-.row input[type=text],.row input[type=search],.row input:not([type]),.row input[type=email],.row input[type=date],.row input[type=number]{
-  flex:1;min-width:0;height:24px;padding:0 6px;border:0;border-radius:6px;background:transparent;text-align:right;outline:none}
-.row input:focus{background:var(--field);box-shadow:var(--ring);text-align:left}
-.row input::placeholder{color:var(--ink3)}
-.row>label{flex:none;margin:0;color:var(--ink);font:400 13px var(--font)}
-.field-in{display:block;width:100%;height:28px;padding:0 10px;border:0;border-radius:7px;background:var(--field);outline:none}
-.field-in:focus{box-shadow:var(--ring)}
-textarea{display:block;width:100%;min-height:240px;padding:10px 0;border:0;background:transparent;resize:vertical;line-height:1.55;outline:none}
-.grp.text{padding:0 12px}
-.grp.text:focus-within{box-shadow:inset 0 0 0 .5px var(--group-edge),var(--ring)}
-pre{white-space:pre-wrap;word-break:break-word;margin:0;padding:10px 0;font:400 12px/1.55 var(--font);color:var(--ink)}
-/* popup button (select) */
-.popup{position:relative;display:inline-flex;align-items:center;max-width:60%}
-.popup select{appearance:none;-webkit-appearance:none;max-width:100%;height:24px;padding:0 30px 0 6px;border:0;border-radius:6px;background:transparent;text-align:right;text-align-last:right;cursor:pointer;outline:none;text-overflow:ellipsis}
-.popup select:focus-visible{box-shadow:var(--ring)}
-.popup::after{content:"";position:absolute;right:0;top:50%;width:22px;height:22px;margin-top:-11px;border-radius:50%;pointer-events:none;
-  background:var(--fill2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1.5 4.5 2.5-2.5 2.5 2.5M1.5 7.5 4 10l2.5-2.5'/%3E%3C/svg%3E") no-repeat center}
-.popup.left select{text-align:left;text-align-last:left}
-/* switch */
-.switch{position:relative;flex:none;width:38px;height:22px}
-.switch input{position:absolute;inset:0;margin:0;opacity:0;cursor:pointer;z-index:1}
-.switch span{position:absolute;inset:0;border-radius:11px;background:var(--track);transition:background .2s}
-.switch span::after{content:"";position:absolute;left:2px;top:2px;width:18px;height:18px;border-radius:50%;background:var(--knob);box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s cubic-bezier(.3,.7,.3,1)}
-.switch input:checked+span{background:var(--accent)}
-.switch input:checked+span::after{transform:translateX(16px);background:#fff}
-.switch input:focus-visible+span{box-shadow:var(--ring)}
-/* buttons (macOS push buttons) */
-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:24px;padding:0 12px;border:0;border-radius:7px;
-  background:var(--fill2);color:var(--ink);font:400 13px var(--font);white-space:nowrap;cursor:pointer;box-shadow:inset 0 0 0 .5px var(--line2),0 .5px 1px rgba(0,0,0,.08)}
-button:hover{background:var(--fill-hover)}
-button:active{filter:brightness(.92)}
-button:focus-visible{outline:none;box-shadow:var(--ring)}
-button.primary{background:var(--accent);color:var(--on-accent);box-shadow:inset 0 .5px 0 rgba(255,255,255,.25),0 .5px 1px rgba(0,0,0,.15)}
-button.primary:hover{background:var(--accent);filter:brightness(1.06)}
-button.small{height:22px;padding:0 10px;font-size:12px}
-button.plain{background:transparent;box-shadow:none;color:var(--accent);padding:0 4px}button.plain:hover{text-decoration:underline}
-button.danger{color:var(--bad)}
-button:disabled{opacity:.45;cursor:default}
-button kbd{display:none}
-button.scan svg.i{width:13px;height:13px;margin-left:-2px}
-button.busy svg.i{animation:spin .9s linear infinite}
-.scan-msg{max-width:220px;overflow:hidden;text-overflow:ellipsis;color:var(--ink2)}.scan-msg.bad{color:var(--bad)}
-@keyframes spin{to{transform:rotate(360deg)}}
-.btnrow{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin:10px 2px 0}
-.btnrow .sp{flex:1}
-/* segmented control */
-.seg,.subtabs{display:inline-flex;gap:0;padding:2px;border-radius:8px;background:var(--fill2);flex-wrap:wrap}
-.seg a,.subtabs a{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 10px;border-radius:6px;font:400 12px var(--font);color:var(--ink);text-decoration:none;white-space:nowrap}
-.seg a:hover{background:var(--fill)}
-.seg a.on,.subtabs a.on{background:var(--win);box-shadow:0 .5px 2px rgba(0,0,0,.18),inset 0 0 0 .5px var(--group-edge)}
-@media (prefers-color-scheme:dark){.seg a.on,.subtabs a.on{background:#5b5b5f}}
-.seg a b,.subtabs a b{font-weight:400;color:var(--ink2);font-variant-numeric:tabular-nums}
-.filterbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
-.filterbar .sp{flex:1}
-.filterbar input[type=search]{width:220px;height:26px;padding:0 10px 0 28px;border:0;border-radius:13px;background:var(--fill2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='5.5' cy='5.5' r='4.25'/%3E%3Cpath d='m8.8 8.8 3 3'/%3E%3C/svg%3E") no-repeat 10px center;outline:none}
-.filterbar input[type=search]:focus{box-shadow:var(--ring)}
-.filterbar a.quiet{font:400 12px var(--font);color:var(--accent)}
-.tag{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:5px;font:600 10.5px/1 var(--font);background:var(--fill2);color:var(--ink2);white-space:nowrap;vertical-align:1px}
-.tag.accent,.badge.hot,.badge.bad{background:var(--accent);color:var(--on-accent)}
-.tag.soft{background:var(--tint);color:var(--accent)}
-.badge{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:5px;font:600 10.5px/1 var(--font);background:var(--fill2);color:var(--ink2)}
-.pill{display:inline-flex;align-items:center;height:18px;padding:0 8px;border-radius:9px;font:500 11px/1 var(--font);background:var(--fill2);color:var(--ink)}
-.pill.interview,.pill.offer,.pill.placed{background:var(--accent);color:#fff}.pill.rtr,.pill.submitted{background:var(--tint);color:var(--accent)}.pill.not_interested{color:var(--ink2)}
-kbd{display:inline-block;min-width:16px;padding:0 4px;border-radius:4px;background:var(--fill2);font:500 10.5px/16px var(--font);text-align:center;color:var(--ink2)}
-
-/* disclosure rows (details) */
-details>summary{list-style:none;cursor:pointer}details>summary::-webkit-details-marker{display:none}
-details.disc>summary .chev{transition:transform .2s}
-details.disc[open]>summary .chev{transform:rotate(135deg);margin-top:-4px}
-details.disc>.disc-body{padding:2px 0 10px}
-
-/* ── Review / Manual: push navigation inside the content column ────── */
-.stack{flex:1;min-height:0;display:flex;flex-direction:column}
-.stack .view-root{flex:1;min-height:0;overflow-y:auto;padding:20px 20px 28px}
-.stack .pane{flex:1;min-height:0;display:none;flex-direction:column}
-.stack.detail .view-root{display:none}
-.stack.detail .pane{display:flex}
-.list{display:flex;flex-direction:column}
-.group{display:flex;align-items:baseline;justify-content:space-between;font:700 13px/1 var(--font);margin:20px 10px 8px}
-.group:first-child{margin-top:4px}
-.group b{font:400 12px var(--font);color:var(--ink2);font-variant-numeric:tabular-nums}
-.group.hot,.group.fix{color:var(--accent)}
-.group:has(+ .group),.group:last-child{display:none}
-.group.keep{display:flex}
-.item{position:relative;display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 10px;background:var(--group);cursor:pointer;outline:none}
-.group + .item{border-top-left-radius:12px;border-top-right-radius:12px}
-.item:has(+ .group),.item:last-child,.item:has(+ .foot){border-bottom-left-radius:12px;border-bottom-right-radius:12px;margin-bottom:10px}
-.item + .item::before{content:"";position:absolute;left:10px;right:10px;top:0;height:1px;background:var(--sep)}
-.item:hover{background:var(--fill)}
-.item:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
-.item input{display:none;margin:0;width:15px;height:15px;accent-color:var(--accent)}
-.list.selecting .item input,.view-root:has(.bulk.on) .item input{display:block}
-.item>div:nth-of-type(1){flex:1;min-width:0}
-.item::after{content:"";flex:none;width:7px;height:7px;margin:0 4px 0 2px;border:solid var(--ink3);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
-.it-title{font:400 13px/1.35 var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.it-sub{font:400 11px/1.4 var(--font);color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-.it-sub .tagline{color:var(--accent);font-weight:500}
-.item.hot .it-title::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:7px;vertical-align:1px}
-.it-score{flex:none;color:var(--ink2);font-variant-numeric:tabular-nums}
-.item.gone{display:none}
-.item.pop{animation:popin .6s ease-out}
-.listtools{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
-.bulk{display:none;align-items:center;gap:6px;height:36px;padding:0 6px 0 12px;border-radius:10px;background:var(--fill);font:400 12px var(--font);color:var(--ink2)}
-.bulk.on{display:flex}.bulk b{color:var(--ink)}.bulk .sp{flex:1}
-.rm-row{display:flex;align-items:center;gap:8px;font:400 12px var(--font);color:var(--ink2)}
-.empty{margin:auto;text-align:center;color:var(--ink2);max-width:360px;padding:40px 20px}
-.empty h3{font:700 17px/1.3 var(--font);color:var(--ink);margin:0 0 6px}
-
-/* draft detail */
-.draft{flex:1;min-height:0;display:flex;flex-direction:column}
-.draft-body{flex:1;min-height:0;overflow-y:auto;padding:20px 20px 24px}
-.draft-head{text-align:left;padding:18px 20px 16px;margin-bottom:10px;border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge)}
-.draft-head .kicker{display:flex;align-items:center;gap:8px;margin-bottom:6px;font:400 11px var(--font);color:var(--ink2)}
-.draft-head h3{font:700 17px/1.3 var(--font);letter-spacing:-.01em;margin:0 0 4px}
-.draft-head h3 a{color:var(--ink)}.draft-head h3 a:hover{color:var(--accent)}
-.callout{display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:10px 12px;border-radius:9px;background:var(--tint);font:400 12px/1.45 var(--font)}
-.callout::before{content:"";flex:none;width:8px;height:8px;margin-top:4px;border-radius:50%;background:var(--accent)}
-.warnlist div{display:flex;gap:8px;padding:4px 0;font:400 12px/1.45 var(--font)}
-.warnlist div::before{content:"";flex:none;width:6px;height:6px;margin-top:6px;border-radius:50%;background:var(--accent)}
-.draft-actions{flex:none;display:flex;align-items:center;gap:8px;padding:12px 20px;border-top:1px solid var(--sep);background:var(--win)}
-.draft-actions .sp{flex:1}
-.draft-actions .msg{font:400 12px var(--font);color:var(--ink2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kw{font:400 12px/1.9 var(--font);color:var(--ink2)}
-.kw i{font-style:normal}
-.kw span{display:inline-block;padding:0 7px;margin:1px 2px;border-radius:5px;background:var(--fill2);color:var(--ink);font:400 11.5px/20px var(--font)}
-.kw .m{background:var(--tint);color:var(--accent)}
-
-/* tables (Search results page) */
-.panel{border-radius:12px;background:var(--group);box-shadow:inset 0 0 0 .5px var(--group-edge);padding:14px 14px;margin-bottom:10px}
-.panel>h3{font:700 13px var(--font);margin:0 0 8px}
-table{width:100%;border-collapse:collapse;font:400 12px/1.4 var(--font)}
-th{text-align:left;font:600 11px var(--font);color:var(--ink2);padding:6px 8px;border-bottom:1px solid var(--sep)}
-td{padding:8px;border-bottom:1px solid var(--sep);vertical-align:top}
-tr:last-child td{border-bottom:0}
-td a{color:var(--ink)}td a:hover{color:var(--accent)}
-.nw{white-space:nowrap}
-
-@keyframes popin{from{background:var(--tint)}}
-@media (max-width:820px){body{padding:0}.window{border-radius:0;height:100%;width:100%}:root{--sidebar:200px}}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
-`;
+const assetUrl = (name) => {
+  let v = '';
+  try { v = createHash('sha256').update(readFileSync(join(ROOT, 'public', name))).digest('hex').slice(0, 10); }
+  catch { /* file missing: serve the plain URL and let the static handler 404 */ }
+  return `/static/${name}${v ? `?v=${v}` : ''}`;
+};
+const ASSETS = { css: assetUrl('runevoid.css'), clicks: assetUrl('clicks.js'), theme: assetUrl('theme.js'), scrollbars: assetUrl('scrollbars.js'), dialogs: assetUrl('dialogs.js'), menus: assetUrl('menus.js') };
 
 // ── Client script shared by every page ────────────────────────────────────────
 
 const CLIENT_JS = `
-// Toolbar back: inside Review/Manual it closes the open draft (like a Settings sub-page); elsewhere it is browser back.
-function navBack(){ const st = document.getElementById('stack'); if (st && st.classList.contains('detail') && window.showRoot) showRoot(); else history.back() }
 async function post(url, data){
-  const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Nvoids-Bot':'1'},body:JSON.stringify(data||{})});
+  const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Runevoid':'1'},body:JSON.stringify(data||{})});
   return r.json();
 }
 async function simple(url, data, btn, confirmText){
-  if (confirmText && !confirm(confirmText)) return;
+  if (confirmText && !(await rvConfirm(confirmText))) return;
   if (btn) btn.disabled = true;
   const j = await post(url, data);
-  if (j.ok) location.reload(); else { alert(j.error || 'Failed'); if (btn) btn.disabled = false }
+  if (j.ok) location.reload(); else { rvAlert(j.error || 'Failed'); if (btn) btn.disabled = false }
 }
 // Scan Now: checks nvoids immediately (skipping the wait after failed checks) and says what happened.
 async function pollNow(b){
@@ -323,7 +59,7 @@ async function pollNow(b){
   const err = !j.ok || j.error ? (j.error || 'Scan failed') : j.paused ? 'The watcher is paused. Turn on Watch nvoids first.' : j.skipped ? 'A scan is already running.' : '';
   const say = (t, bad) => { if (msg) { msg.textContent = t; msg.title = t; msg.classList.toggle('bad', !!bad) } };
   b.classList.remove('busy');
-  if (err) { say(/HTTP 52\d/.test(err) ? 'nvoids is down (' + err.match(/HTTP 52\d/)[0] + ')' : /fetch failed|ENOTFOUND|ECONN|timed? ?out|abort/i.test(err) ? 'Can’t reach nvoids' : err, true); if (msg) msg.title = err; b.innerHTML = label; b.disabled = false; return }
+  if (err) { say(/HTTP 52\\d/.test(err) ? 'nvoids is down (' + err.match(/HTTP 52\\d/)[0] + ')' : /fetch failed|ENOTFOUND|ECONN|timed? ?out|abort/i.test(err) ? 'Can’t reach nvoids' : err, true); if (msg) msg.title = err; b.innerHTML = label; b.disabled = false; return }
   if (j.new || j.drafted) { say(j.new + ' new · ' + j.drafted + ' drafted'); setTimeout(() => location.reload(), 900); return }
   say('No new postings'); b.innerHTML = label; b.disabled = false;
   setTimeout(() => say(''), 6000);
@@ -333,7 +69,7 @@ async function pollNow(b){
 async function stopRematch(b){
   b.disabled = true;
   const j = await post('/api/rematch-stop');
-  if (!j.ok) { alert(j.error || 'Failed'); b.disabled = false }
+  if (!j.ok) { rvAlert(j.error || 'Failed'); b.disabled = false }
 }
 function rmLabel(p){
   const n = p.done + '/' + p.total;
@@ -355,11 +91,11 @@ if (document.querySelector('[data-rm-text]')) {
 }
 async function testSend(b){
   const resumes = ${JSON.stringify(listResumeFiles().map(r => ({ folder: r.folder, name: r.name })))};
-  if (!resumes.length) { alert('No resumes found. Add a .docx resume to your resume folder first.'); return; }
-  const choices = resumes.map(r => r.folder + ': ' + r.name).join('\\n');
-  const f = prompt('Send a test email to YOUR OWN address. Enter a resume number/name from this list:\\n' + choices, resumes[0].folder); if (!f) return;
+  if (!resumes.length) { rvAlert('No resumes found. Add a .docx resume to your resume folder first.'); return; }
+  const f = await rvChoose('Send a test email to your own address with which resume?', resumes.map(r => ({ value: r.folder, label: r.folder + ': ' + r.name })), resumes[0].folder, { ok: 'Send Test' });
+  if (!f) return;
   b.disabled = true; const j = await post('/api/test-send',{folder:f}); b.disabled = false;
-  alert(j.ok ? 'Test email sent to your own address. Check your inbox.' : 'Failed: ' + j.error);
+  rvAlert(j.ok ? 'Test email sent to your own address. Check your inbox.' : 'Failed: ' + j.error);
 }
 // Live countdown to the next send (header strip and Overview).
 const NEXT_AT = Number(document.body.dataset.nextAt || 0);
@@ -431,16 +167,16 @@ async function approveCard(id, btn){
   else { c.querySelector('.msg').innerHTML = '<span class="err"></span>'; c.querySelector('.msg .err').textContent = j.error; btn.disabled = false }
 }
 async function cardAction(url, id, btn, doneText, confirmText){
-  if (confirmText && !confirm(confirmText)) return;
+  if (confirmText && !(await rvConfirm(confirmText))) return;
   if (btn) btn.disabled = true;
   const j = await post(url, {});
-  if (!j.ok) { alert(j.error || 'Failed'); if (btn) btn.disabled = false; return }
+  if (!j.ok) { rvAlert(j.error || 'Failed'); if (btn) btn.disabled = false; return }
   if (doneText) markDone(doneText); else openItem(current);
 }
 async function holdAction(id, decision, btn){
   const sel = btn.closest('.draft')?.querySelector('select[name=resume_folder]');
   btn.disabled = true; const j = await post('/api/hold/' + id, { decision, resume_folder: sel ? sel.value : '' });
-  if (!j.ok) { alert(j.error); btn.disabled = false; return }
+  if (!j.ok) { rvAlert(j.error); btn.disabled = false; return }
   if (decision === 'to_draft') openItem(current); else markDone('Back in the queue');
 }
 document.addEventListener('change', e => {
@@ -469,10 +205,10 @@ function selected(){ return [...list.querySelectorAll('.item input:checked')].ma
 function updateBulk(){ const n = selected().length; const b = document.getElementById('bulk'); b.classList.toggle('on', n > 0); document.getElementById('bulk-n').textContent = n }
 async function bulk(action, btn){
   const ids = selected(); if (!ids.length) return;
-  if (action === 'skip' && !confirm('Skip ' + ids.length + ' draft(s)?')) return;
+  if (action === 'skip' && !(await rvConfirm('Skip ' + ids.length + ' draft(s)?', { ok: 'Skip' }))) return;
   btn.disabled = true; btn.textContent = action === 'rematch' ? 'Re-matching…' : 'Skipping…';
   const j = await post('/api/bulk', {action, ids});
-  if (!j.ok) alert(j.error); location.reload();
+  if (!j.ok) await rvAlert(j.error); location.reload();
 }
 function selectAllShown(on){ for (const it of items()) it.querySelector('input').checked = on; list.classList.toggle('selecting', on); updateBulk() }
 function toggleSelect(b){ const on = list.classList.toggle('selecting'); if (!on) selectAllShown(false); b.textContent = on ? 'Cancel' : 'Select' }
@@ -620,45 +356,61 @@ function computeCounts() {
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
-// The recruiter's phone from the posting's signature, as a Settings-style row: tap to call, or copy.
+// The recruiter's phone from the posting's signature, as a row: tap to call, or copy.
 function phoneRow(job) {
   const p = extractPhone(job.jd_text, job.recruiter_email);
   if (!p) return '';
   const [num, ext] = p.split(' ext. ');
   const tel = `+1${num.replace(/\D/g, '')}${ext ? `,${ext}` : ''}`;
   return `<div class="row"><label>Phone</label><span style="flex:1"></span><a class="val ink" href="tel:${tel}" title="Call">${esc(p)}</a>
-   <button class="small" onclick="navigator.clipboard.writeText('${esc(p)}');this.textContent='Copied';setTimeout(()=>this.textContent='Copy',1200)">Copy</button></div>`;
+   <button type="button" class="small" onclick="navigator.clipboard.writeText('${esc(p)}');this.textContent='Copied';setTimeout(()=>this.textContent='Copy',1200)">Copy</button></div>`;
 }
 
+// Icons: 16-unit grid, 2px strokes centred on whole coordinates (see svg.i in runevoid.css). Shapes with
+// class "f" are filled instead of stroked. Shown only at 16px or 32px so every line lands on whole pixels.
 const ICON = {
-  overview: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="9" width="4.5" height="4.5" rx="1.2"/>',
-  review: '<path d="M2 9.5 4 3.5h8l2 6V13a.8.8 0 0 1-.8.8H2.8A.8.8 0 0 1 2 13z"/><path d="M2 9.5h3.5l1 1.6h3l1-1.6H14"/>',
-  manual: '<path d="M9.5 2H4.3a.8.8 0 0 0-.8.8v10.4c0 .4.4.8.8.8h7.4c.4 0 .8-.4.8-.8V5z"/><path d="M9.5 2v3h3M8 7.5v4M6 9.5h4"/>',
-  sent: '<path d="M14 2 2.2 6.8a.3.3 0 0 0 0 .6L7 9l1.6 4.8a.3.3 0 0 0 .6 0z"/><path d="m7 9 3.2-3.2"/>',
-  vendors: '<circle cx="6" cy="5.5" r="2.3"/><path d="M1.8 13.5c.4-2.4 2-3.7 4.2-3.7s3.8 1.3 4.2 3.7"/><circle cx="11.6" cy="6" r="1.8"/><path d="M11.3 9.7c1.6.1 2.6 1.2 2.9 3"/>',
-  scraped: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><circle cx="2.6" cy="4" r=".6" fill="currentColor"/><circle cx="2.6" cy="8" r=".6" fill="currentColor"/><circle cx="2.6" cy="12" r=".6" fill="currentColor"/>',
-  logs: '<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/>',
-  health: '<path d="M1.5 8.5h2.8L6 4.5l3 7.5 1.7-3.5h3.8"/>',
-  search: '<circle cx="6.8" cy="6.8" r="4.3"/><path d="m10 10 3.5 3.5"/>',
-  back: '<path d="M10 3 5 8l5 5"/>', fwd: '<path d="m6 3 5 5-5 5"/>',
-  send: '<path d="M14 2 2.2 6.8a.3.3 0 0 0 0 .6L7 9l1.6 4.8a.3.3 0 0 0 .6 0z"/>',
-  eye: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
-  refresh: '<path d="M13.5 8A5.5 5.5 0 1 1 11.8 4"/><path d="M13.5 2.5V5H11"/>',
-  mail: '<rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4"/>',
-  lock: '<rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
-  block: '<circle cx="8" cy="8" r="6"/><path d="m3.8 12.2 8.4-8.4"/>',
+  overview: '<rect class="f" x="1" y="1" width="6" height="6"/><rect class="f" x="9" y="1" width="6" height="6"/><rect class="f" x="1" y="9" width="6" height="6"/><rect class="f" x="9" y="9" width="6" height="6"/>',
+  review: '<path d="M3 2h10v12H3z"/><path d="M5 8l2 2 4-4"/>',
+  manual: '<path d="M3 2h6l4 4v8H3z"/><path d="M8 7v4M6 9h4"/>',
+  sent: '<path d="M2 9v5h12V9"/><path d="M8 3v7M5 5l3-3 3 3"/>',
+  vendors: '<path d="M3 14V2h7v12M10 6h3v8M2 14h12"/><path d="M6 5h1M6 8h1M6 11h1"/>',
+  scraped: '<rect class="f" x="1" y="3" width="3" height="2"/><rect class="f" x="1" y="7" width="3" height="2"/><rect class="f" x="1" y="11" width="3" height="2"/><path d="M7 4h7M7 8h7M7 12h7"/>',
+  logs: '<circle cx="8" cy="8" r="6"/><path d="M8 5v3h2"/>',
+  health: '<rect class="f" x="1" y="9" width="3" height="5"/><rect class="f" x="6" y="5" width="3" height="9"/><rect class="f" x="11" y="1" width="3" height="13"/>',
+  search: '<circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/>',
+  send: '<path d="M2 8h10M9 4l4 4-4 4"/>',
+  eye: '<path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle class="f" cx="8" cy="8" r="2"/>',
+  refresh: '<path d="M13 8a5 5 0 1 1-5-5"/><path class="f" d="M8 0l3 3-3 3z"/>',
+  mail: '<path d="M2 3h12v10H2z"/><path d="M2 3l5 5h2l5-5"/>',
+  lock: '<path d="M3 7h10v7H3z"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
+  block: '<circle cx="8" cy="8" r="6"/><path d="M4 12l8-8"/>',
+  folder: '<path d="M2 3h5l2 2h5v9H2z"/><path d="M2 7h12"/>',
+  sun: '<circle cx="8" cy="8" r="3"/><path d="M8 1v1M8 14v1M1 8h1M14 8h1M3 3l1 1M12 12l1 1M13 3l-1 1M3 13l1-1"/>',
+  moon: '<path d="M10 2a6 6 0 1 0 4 10A5 5 0 0 1 10 2z"/>',
+  soundOn: '<path d="M2 6h3l3-3v10l-3-3H2z"/><path d="M11 6v4M14 4v8"/>',
+  soundOff: '<path d="M2 6h3l3-3v10l-3-3H2z"/><path d="M11 6l3 3M14 6l-3 3"/>',
 };
-const icon = (k) => `<svg class="i" viewBox="0 0 16 16">${ICON[k] ?? ''}</svg>`;
-// Sidebar, grouped the way System Settings groups its panes.
+const icon = (k, cls = '') => `<svg class="i${cls ? ` ${cls}` : ''}" viewBox="0 0 16 16" aria-hidden="true" focusable="false">${ICON[k] ?? ''}</svg>`;
+// Desk folder, drawn at 1x in a 56×48 box: the shadow is the same outline, filled and offset 3px.
+const FOLDER_PATH = 'M3 41V7h16l4 4h26v30z';
+const FOLDER = `<svg class="folder" viewBox="0 0 56 48" aria-hidden="true" focusable="false"><path class="sh" d="${FOLDER_PATH}" transform="translate(3 3)"/><path class="bg" d="${FOLDER_PATH}"/><path class="ln" d="${FOLDER_PATH}M3 15h46"/></svg>`;
+
+// Sidebar: an outline of folders, each with its panes underneath.
 const NAV = [
-  [['/', 'overview', 'Overview'], ['/review', 'review', 'Review'], ['/manual', 'manual', 'Manual']],
-  [['/sent', 'sent', 'Sent'], ['/vendors', 'vendors', 'Vendors']],
-  [['/scraped', 'scraped', 'Postings'], ['/logs', 'logs', 'Log'], ['/health', 'health', 'Status']],
+  ['Inbox', [['/', 'overview', 'Overview'], ['/review', 'review', 'Review'], ['/manual', 'manual', 'Manual']]],
+  ['Outreach', [['/sent', 'sent', 'Sent'], ['/vendors', 'vendors', 'Vendors']]],
+  ['System', [['/scraped', 'scraped', 'Postings'], ['/logs', 'logs', 'Log'], ['/health', 'health', 'Status']]],
 ];
+// Desk shortcuts beside the window (shown on wide screens only). They repeat sidebar links, so they are
+// hidden from assistive technology and the tab order.
+const DESK = {
+  left: [['/review', 'review', 'Review'], ['/manual', 'manual', 'Manual'], ['/sent', 'sent', 'Sent']],
+  right: [['/scraped', 'scraped', 'Postings'], ['/logs', 'logs', 'Log']],
+};
 const TITLES = { overview: 'Overview', review: 'Review', manual: 'Manual', sent: 'Sent', vendors: 'Vendors', scraped: 'Postings', logs: 'Log', health: 'Status', search: 'Search' };
-// The large header at the top of a pane (System Settings' icon + title + description card).
+// The card at the top of a pane: icon, title, one line of description.
 export function hero(key, title, text) {
-  return `<div class="hero"><div class="hero-icon ${key === 'overview' ? 'accent' : ''}">${icon(key)}</div><h2>${esc(title)}</h2>${text ? `<p>${text}</p>` : ''}</div>`;
+  return `<div class="hero"><div class="hero-icon${key === 'overview' ? ' accent' : ''}">${icon(key, 'x2')}</div><h2>${esc(title)}</h2>${text ? `<p>${text}</p>` : ''}</div>`;
 }
 
 export function layout(active, body, { searchText = '', script = '', split = false } = {}) {
@@ -668,39 +420,69 @@ export function layout(active, body, { searchText = '', script = '', split = fal
   const rm = rematchStatus();
   const key = active || (searchText ? 'search' : '');
   const badge = { review: c.newPostings + c.waiting + c.fix, manual: c.manual };
-  const nav = NAV.map(g => `<nav class="sb-group">${g.map(([href, k, label]) =>
-    `<a class="sb-item ${key === k ? 'on' : ''}" href="${href}">${icon(k)}<span>${label}</span>${badge[k] ? `<b>${badge[k]}</b>` : ''}</a>`).join('')}</nav>`).join('');
+  const nav = NAV.map(([head, items]) => `<div class="sb-head">${icon('folder')}<span>${head}</span></div>
+   <nav class="sb-group" aria-label="${head}">${items.map(([href, k, label]) =>
+    `<a class="sb-item${key === k ? ' on' : ''}" href="${href}"${key === k ? ' aria-current="page"' : ''}>${icon(k)}<span>${label}</span>${badge[k] ? `<b>${badge[k]}</b>` : ''}</a>`).join('')}</nav>`).join('\n   ');
+  const desk = (side) => `<div class="desk ${side}" aria-hidden="true">${DESK[side].map(([href, k, label]) =>
+    `<a class="dicon${key === k ? ' on' : ''}" href="${href}" tabindex="-1">${side === 'left' ? `<span class="tile">${icon(k, 'x2')}</span>` : FOLDER}<span class="name">${label}</span></a>`).join('')}</div>`;
   const status = `${watcherPaused ? 'Watcher paused' : 'Watching nvoids'} · ${q.paused ? 'sending paused' : q.dryRun ? 'dry run' : 'sending on'}`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RUNE</title>
-<meta name="color-scheme" content="light dark">
-<style>${CSS}</style></head>
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<script>try { if (localStorage.getItem('rv-theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch { /* storage blocked: light */ }</script>
+<title>${TITLES[key] ? `${TITLES[key]} · ` : ''}Runevoid</title>
+<link rel="preload" href="/static/fonts/archivo-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="${ASSETS.css}">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
 <body data-next-at="${q.paused || q.dryRun ? 0 : (q.nextAt ?? 0)}" data-pending="${c.newPostings + c.waiting + c.fix}">
+${desk('left')}
+${desk('right')}
 <div class="window">
- <aside class="sidebar">
-  <div class="titlebar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span></div>
-  <form class="sb-search" action="/search" method="get" role="search">${icon('search')}<input type="search" name="q" value="${esc(searchText)}" placeholder="Search" aria-label="Search emails, names, phones, companies, job numbers"></form>
-  <div class="sb-scroll">
-   <a class="sb-profile" href="/health"><span class="avatar">R</span><span><b>RUNE</b><small>${esc(status)}</small></span></a>
-   ${nav}
+ <header class="wbar">
+  <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+  <h1>Runevoid</h1>
+  <div class="wbar-tools">
+   <button type="button" class="tool" data-theme-toggle aria-pressed="false" aria-label="Dark theme" title="Switch to dark theme"><span class="on">${icon('moon')}</span><span class="off">${icon('sun')}</span></button>
+   <button type="button" class="tool" data-sound-toggle aria-pressed="true" aria-label="Click sounds" title="Turn click sounds off"><span class="on">${icon('soundOn')}</span><span class="off">${icon('soundOff')}</span></button>
   </div>
- </aside>
- <section class="content">
-  <div class="toolbar">
-   <div class="navbtns"><button type="button" onclick="navBack()" aria-label="Back">${icon('back')}</button><span></span><button type="button" onclick="history.forward()" aria-label="Forward">${icon('fwd')}</button></div>
-   <div class="tb-title" id="tb-title">${TITLES[key] ?? ''}</div>
-   <div class="tb-right">
-    ${rm.running ? `<span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button class="small" data-rm-stop onclick="stopRematch(this)">Stop</button>` : ''}
-    ${q.dryRun ? '<span class="tag soft" title="DRY_RUN=true in .env: nothing is really sent">Dry run</span>' : ''}
-    ${q.queued ? `<span>${q.paused ? 'Sending paused' : 'Next send'} <b data-countdown data-idle="${q.paused ? '' : 'at cap'}">—</b></span>` : ''}
-    <span id="scan-msg" class="scan-msg"></span>
-    <button class="small scan" onclick="pollNow(this)" title="Check nvoids for new postings now">${icon('refresh')}<span>Scan Now</span></button>
+ </header>
+ <div class="wbody">
+  <aside class="sidebar">
+   <form class="sb-search" action="/search" method="get" role="search">${icon('search')}<input type="search" name="q" value="${esc(searchText)}" placeholder="Search" aria-label="Search emails, names, phones, companies, job numbers"><button type="submit" class="sr-only">Search</button></form>
+   <div class="sb-scroll">
+    <a class="sb-profile" href="/health"><span class="avatar" aria-hidden="true">R</span><span><b>Runevoid</b><small>${esc(status)}</small></span></a>
+    ${nav}
    </div>
-  </div>
-  ${split ? `<div class="stack" id="stack">${body}</div>` : `<div class="scroller"><div class="pagewrap${key === 'scraped' || key === 'logs' || key === 'search' ? ' wide' : ''}">${body}</div></div>`}
- </section>
+  </aside>
+  <main class="content">
+   <div class="toolbar">
+    <div class="tb-title" id="tb-title">${TITLES[key] ?? ''}</div>
+    <div class="tb-right">
+     ${rm.running ? `<span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button type="button" class="small" data-rm-stop onclick="stopRematch(this)">Stop</button>` : ''}
+     ${q.dryRun ? '<span class="tag soft" title="DRY_RUN=true in .env: nothing is really sent">Dry run</span>' : ''}
+     ${q.queued ? `<span>${q.paused ? 'Sending paused' : 'Next send'} <b data-countdown data-idle="${q.paused ? '' : 'at cap'}">—</b></span>` : ''}
+     <span id="scan-msg" class="scan-msg" role="status"></span>
+     <button type="button" class="small scan" onclick="pollNow(this)" title="Check nvoids for new postings now">${icon('refresh')}<span>Scan Now</span></button>
+    </div>
+   </div>
+   ${split ? `<div class="stack" id="stack">${body}</div>` : `<div class="scroller"><div class="pagewrap${key === 'scraped' || key === 'logs' || key === 'search' ? ' wide' : ''}">${body}</div></div>`}
+  </main>
+ </div>
 </div>
-<script>${CLIENT_JS}${script}</script></body></html>`;
+<script src="${ASSETS.theme}"></script>
+<script src="${ASSETS.clicks}"></script>
+<script src="${ASSETS.scrollbars}"></script>
+<script src="${ASSETS.dialogs}"></script>
+<script src="${ASSETS.menus}"></script>
+<script>${CLIENT_JS}${script}</script>
+</body>
+</html>`;
 }
 
 export function freshItems(manual, after) {
@@ -731,13 +513,13 @@ export function reviewPage(manual) {
   const total = rows.length;
   const root = `<div class="view-root">
  <div class="pagewrap">
- ${manual ? addJdForm() : hero('review', 'Review', total ? `${total} draft${total === 1 ? '' : 's'} waiting. Open one to check the email, then approve or skip it.` : 'New AI/ML postings appear here as RUNE finds them.')}
+ ${manual ? addJdForm() : hero('review', 'Review', total ? `${total} draft${total === 1 ? '' : 's'} waiting. Open one to check the email, then approve or skip it.` : 'New AI/ML postings appear here as Runevoid finds them.')}
  <div class="listtools"${total ? '' : ' style="display:none"'}>
   <div class="filterbar"><input id="filter" type="search" placeholder="Filter" aria-label="Filter drafts (press /)"><span class="sp"></span>
-   <button class="small" onclick="toggleSelect(this)">Select</button>
-   ${total ? `<button class="small" ${rm.running ? 'disabled' : ''} onclick="simple('/api/rematch-all',{source:'${manual ? 'manual' : 'nvoids'}'},this,'Re-score all ${total} drafts against your current resumes? Unedited drafts switch to the best resume.')">Re-match All</button>` : ''}</div>
-  <div class="bulk" id="bulk"><span><b id="bulk-n">0</b> selected</span><span class="sp"></span><button class="small" onclick="selectAllShown(true)">Select All</button><button class="small" onclick="bulk('rematch',this)">Re-match</button><button class="small" onclick="bulk('skip',this)">Skip</button><button class="small plain" onclick="selectAllShown(false)">Done</button></div>
-  ${rm.running ? `<div class="rm-row"><span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button class="small danger" data-rm-stop onclick="stopRematch(this)">Stop</button><a href="" data-rm-done style="display:none" onclick="location.reload();return false">Refresh</a></div>` : ''}
+   <button type="button" class="small" onclick="toggleSelect(this)">Select</button>
+   ${total ? `<button type="button" class="small" ${rm.running ? 'disabled' : ''} onclick="simple('/api/rematch-all',{source:'${manual ? 'manual' : 'nvoids'}'},this,'Re-score all ${total} drafts against your current resumes? Unedited drafts switch to the best resume.')">Re-match All</button>` : ''}</div>
+  <div class="bulk" id="bulk"><span><b id="bulk-n">0</b> selected</span><span class="sp"></span><button type="button" class="small" onclick="selectAllShown(true)">Select All</button><button type="button" class="small" onclick="bulk('rematch',this)">Re-match</button><button type="button" class="small" onclick="bulk('skip',this)">Skip</button><button type="button" class="small plain" onclick="selectAllShown(false)">Done</button></div>
+  ${rm.running ? `<div class="rm-row"><span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button type="button" class="small danger" data-rm-stop onclick="stopRematch(this)">Stop</button><a href="" data-rm-done style="display:none" onclick="location.reload();return false">Refresh</a></div>` : ''}
  </div>
  <div class="list" id="list" data-manual="${manual ? 1 : 0}" data-prio-ms="${config.priorityWindowMinutes * 60_000}">
   ${manual ? '' : group('hot', 'New in the last ' + config.priorityWindowMinutes + ' minutes', k.prio, 'hot')}
@@ -753,16 +535,16 @@ export function reviewPage(manual) {
 export const REVIEW_SCRIPT = REVIEW_JS;
 
 function addJdForm() {
-  return `${hero('manual', 'Manual', 'Paste a job description from anywhere. RUNE reads the recruiter, role and location, picks your best resume and writes the email.')}
+  return `${hero('manual', 'Manual', 'Paste a job description from anywhere. Runevoid reads the recruiter, role and location, picks your best resume and writes the email.')}
 <div class="section">Job description</div>
 <div class="grp text"><textarea id="m_jd" style="min-height:200px" placeholder="Paste the whole posting, including the recruiter’s signature and email"></textarea></div>
 <div class="section">Details <span class="aside">Optional</span></div>
 <div class="grp">
- <div class="row"><label for="m_to">Recruiter email</label><input id="m_to" placeholder="Read from the JD"></div>
- <div class="row"><label for="m_title">Role</label><input id="m_title" placeholder="Read from the JD"></div>
- <div class="row"><label for="m_loc">Location</label><input id="m_loc" placeholder="Read from the JD"></div>
+ <div class="row"><label for="m_to">Recruiter email</label><input id="m_to" type="email" placeholder="Read from the JD"></div>
+ <div class="row"><label for="m_title">Role</label><input type="text" id="m_title" placeholder="Read from the JD"></div>
+ <div class="row"><label for="m_loc">Location</label><input type="text" id="m_loc" placeholder="Read from the JD"></div>
 </div>
-<div class="btnrow" style="align-items:flex-start"><span class="msg meta" id="m_msg" style="flex:1;min-width:0;white-space:normal"></span><span class="sp"></span><button class="primary" onclick="addJd(this)">Create Draft</button></div>
+<div class="btnrow" style="align-items:flex-start"><span class="msg meta" id="m_msg" style="flex:1;min-width:0;white-space:normal"></span><span class="sp"></span><button type="button" class="primary" onclick="addJd(this)">Create Draft</button></div>
 <p class="foot">Rules that would skip an nvoids posting (W2-only, low match) show as warnings instead, since you chose this job.</p>
 <script>
 async function addJd(b, replace){
@@ -777,7 +559,7 @@ async function addJd(b, replace){
   if (j.duplicate && j.replaceable) {
     const r = document.createElement('button'); r.className = 'small'; r.textContent = 'Replace and Add';
     r.title = 'Cancel #' + j.prior_id + ' and add this JD instead, matched against your current resumes';
-    r.onclick = () => { if (confirm('Cancel #' + j.prior_id + ' and use this JD instead? It becomes a new draft for you to approve.')) addJd(r, true) };
+    r.onclick = async () => { if (await rvConfirm('Cancel #' + j.prior_id + ' and use this JD instead? It becomes a new draft for you to approve.', { ok: 'Replace' })) addJd(r, true) };
     msg.append(' ', r);
   }
 }
@@ -819,11 +601,11 @@ export function draftView(app, job) {
   const kwHtml = (r) => `${r.why ? `<i>${esc(r.why)}</i><br>` : ''}${formulaLine(r)}In this resume: ${(r.matched ?? []).map(k => `<span class="m">${esc(k)}</span>`).join('') || '–'}${r.related?.length ? `<br>Partial credit: ${r.related.map(esc).join(', ')}` : ''}<br>
    Not found: ${(r.missing ?? []).map(k => `<span>${esc(k)}</span>`).join('') || '–'}`;
   const kwData = Object.fromEntries(ranked.map(r => [r.folder, { html: kwHtml(r), found: (r.matched ?? []).length, missing: (r.missing ?? []).length, score: r.score }]));
-  const skip = `<button data-act="skip" onclick="cardAction('/api/skip/${app.id}',${app.id},this,'Skipped','Skip this job?')" title="Skip (s)">Skip</button>`;
+  const skip = `<button type="button" data-act="skip" onclick="cardAction('/api/skip/${app.id}',${app.id},this,'Skipped','Skip this job?')" title="Skip (s)">Skip</button>`;
   const actions = held
-    ? [skip, '<span class="msg"></span><span class="sp"></span>', ...holdButtons.map(([d, label], i, all) => `<button class="${i === all.length - 1 ? 'primary' : ''}" onclick="holdAction(${app.id},'${d}',this)">${esc(label)}</button>`)]
-    : [skip, `<button data-act="rematch" onclick="cardAction('/api/rematch/${app.id}',${app.id},this,'')" title="Re-match (r)">Re-match</button>`,
-       '<span class="msg"></span><span class="sp"></span>', `<button class="primary" data-act="approve" onclick="approveCard(${app.id},this)" title="Approve and queue (a)">Approve</button>`];
+    ? [skip, '<span class="msg"></span><span class="sp"></span>', ...holdButtons.map(([d, label], i, all) => `<button type="button" class="${i === all.length - 1 ? 'primary' : ''}" onclick="holdAction(${app.id},'${d}',this)">${esc(label)}</button>`)]
+    : [skip, `<button type="button" data-act="rematch" onclick="cardAction('/api/rematch/${app.id}',${app.id},this,'')" title="Re-match (r)">Re-match</button>`,
+       '<span class="msg"></span><span class="sp"></span>', `<button type="button" class="primary" data-act="approve" onclick="approveCard(${app.id},this)" title="Approve and queue (a)">Approve</button>`];
   return `<div class="draft" id="app-${app.id}">
 <div class="draft-body"><div class="pagewrap">
  <div class="draft-head">
@@ -833,14 +615,14 @@ export function draftView(app, job) {
   ${held ? `<div class="callout"><div><b>Held.</b> ${esc(app.hold_reason)}</div></div>` : ''}
   ${app.status === 'failed' ? `<div class="callout"><div><b>Last send failed.</b> ${esc(app.error)}</div></div>` : ''}
  </div>
- ${warnings.length ? `<div class="section">${warnings.length === 1 ? 'Warning' : `${warnings.length} warnings`}</div><div class="grp">${warnings.map(w => `<div class="row warn-row"><span class="dot"></span><span class="lbl wrap"><div>${esc(w)}</div></span></div>`).join('')}</div>` : ''}
+ ${warnings.length ? `<div class="section">${warnings.length === 1 ? 'Warning' : `${warnings.length} warnings`}</div><div class="grp">${warnings.map(w => `<div class="row warn-row"><span class="dot"></span><span class="lbl wrap"><span>${esc(w)}</span></span></div>`).join('')}</div>` : ''}
  <div class="section">Email</div>
  <div class="grp">
   <div class="row"><label>Resume</label><span class="sp" style="flex:1"></span><span class="popup"><select name="resume_folder">${opts}</select></span></div>
-  <div class="row"><label>To</label><input name="to_email" value="${esc(app.to_email)}" ${dis}></div>
+  <div class="row"><label>To</label><input name="to_email" type="email" value="${esc(app.to_email)}" ${dis}></div>
   ${phoneRow(job)}
-  <div class="row"><label>Cc</label><input name="cc_emails" value="${esc(cc)}" placeholder="None" ${dis}></div>
-  <div class="row"><label>Subject</label><input name="subject" value="${esc(app.subject)}" ${dis}></div>
+  <div class="row"><label>Cc</label><input name="cc_emails" type="email" multiple value="${esc(cc)}" placeholder="None" ${dis}></div>
+  <div class="row"><label>Subject</label><input type="text" name="subject" value="${esc(app.subject)}" ${dis}></div>
  </div>
  <div class="section">Message${edited ? '<span class="aside">Edited by you</span>' : ''}</div>
  <div class="grp text"><textarea name="body" ${dis}>${esc(app.body)}</textarea></div>
@@ -875,7 +657,7 @@ export function emailView(app, job) {
 <div class="section">Message</div>
 <div class="grp text"><pre>${esc(app.body)}</pre></div>
 <div class="grp" style="margin-top:20px"><details class="disc" open><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details></div>
-${app.status === 'queued' ? `<div class="btnrow"><button onclick="simple('/api/cancel/${app.id}',{},this)">Pull Back from Queue</button></div>` : ''}`;
+${app.status === 'queued' ? `<div class="btnrow"><button type="button" onclick="simple('/api/cancel/${app.id}',{},this)">Pull Back from Queue</button></div>` : ''}`;
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────
@@ -899,12 +681,12 @@ export function overviewPage() {
   const editor = nextApp ? `<div id="q-editor">
  <div class="section">Before it sends <span class="aside" id="q-title">${esc(jobs.get(nextApp.job_id)?.title ?? '')}</span></div>
  <div class="grp">
-  <div class="row"><label>To</label><input id="q-to" value="${esc(nextApp.to_email)}"></div>
-  <div class="row"><label>Cc</label><input id="q-cc" value="${esc(nextApp.cc_emails ?? ccFor(nextApp.to_email).join(', '))}" placeholder="None"></div>
-  <div class="row"><label>Subject</label><input id="q-subject" value="${esc(nextApp.subject)}"></div>
+  <div class="row"><label>To</label><input id="q-to" type="email" value="${esc(nextApp.to_email)}"></div>
+  <div class="row"><label>Cc</label><input id="q-cc" type="email" multiple value="${esc(nextApp.cc_emails ?? ccFor(nextApp.to_email).join(', '))}" placeholder="None"></div>
+  <div class="row"><label>Subject</label><input type="text" id="q-subject" value="${esc(nextApp.subject)}"></div>
  </div>
  <div class="grp text"><textarea id="q-body" style="min-height:200px">${esc(nextApp.body)}</textarea></div>
- <div class="btnrow"><button onclick="simple('/api/cancel/'+QID,{},this,'Pull this email back to drafts?')">Pull Back</button><span class="meta" id="q-msg"></span><span class="sp"></span><button class="primary" onclick="saveQueued(this)">Save</button></div>
+ <div class="btnrow"><button type="button" onclick="simple('/api/cancel/'+QID,{},this,'Pull this email back to drafts?')">Pull Back</button><span class="meta" id="q-msg"></span><span class="sp"></span><button type="button" class="primary" onclick="saveQueued(this)">Save</button></div>
  <input type="hidden" id="q-id" value="${nextApp.id}"></div>` : '';
   const upNext = queue.slice(0, 40).map((r, i) => {
     const j = jobs.get(r.job_id) ?? {};
@@ -918,7 +700,7 @@ export function overviewPage() {
     !pollOk ? ['/logs', '', 'The last nvoids check failed'] : null,
     c.q.dryRun ? ['/health', 'ring', 'Dry run is on, so nothing is really sent'] : null,
   ].filter(Boolean);
-  const page = `${hero('overview', 'RUNE', 'Watches nvoids for AI/ML roles, drafts an email with your best resume, and sends only what you approve.')}
+  const page = `${hero('overview', 'Runevoid', 'Watches nvoids for AI/ML roles, drafts an email with your best resume, and sends only what you approve.')}
 ${alerts.length ? `<div class="grp">${alerts.map(([href, cls, t]) => `<a class="row" href="${href}"><span class="dot ${cls}"></span><span class="lbl"><span>${t}</span></span><span class="chev"></span></a>`).join('')}</div>` : ''}
 <div class="section">Controls</div>
 <div class="grp">
@@ -926,8 +708,8 @@ ${alerts.length ? `<div class="grp">${alerts.map(([href, cls, t]) => `<a class="
   <label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="simple('/api/pause-sending',{on:!this.checked},this)" aria-label="Send approved emails"><span></span></label></div>
  <div class="row"><span class="lbl"><span>Watch nvoids</span><span class="sub">${watcherPaused ? 'Paused. No new postings are read.' : `Checks every ${config.pollSeconds} seconds.`}</span></span>
   <label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="simple('/api/pause-watcher',{on:!this.checked},this)" aria-label="Watch nvoids"><span></span></label></div>
- <div class="row"><span class="lbl"><span>Scan for new postings</span><span class="sub">Last scan ${esc(String(lastPoll).slice(11, 16) || '–')}${pollOk ? '' : ', failed'}</span></span><button onclick="pollNow(this)"><span>Scan Now</span></button></div>
- <div class="row"><span class="lbl"><span>Test email</span><span class="sub">Sends a sample to your own address.</span></span><button onclick="testSend(this)">Send Test…</button></div>
+ <div class="row"><span class="lbl"><span>Scan for new postings</span><span class="sub">Last scan ${esc(String(lastPoll).slice(11, 16) || '–')}${pollOk ? '' : ', failed'}</span></span><button type="button" onclick="pollNow(this)"><span>Scan Now</span></button></div>
+ <div class="row"><span class="lbl"><span>Test email</span><span class="sub">Sends a sample to your own address.</span></span><button type="button" onclick="testSend(this)">Send Test…</button></div>
 </div>
 <div class="section">Today</div>
 <div class="grp">
@@ -944,9 +726,9 @@ ${editor}
 <script>
 let QID = Number(document.getElementById('q-id')?.value || 0);
 async function loadQueued(id){
-  const r = await (await fetch('/api/queued/' + id)).json(); if (!r.ok) { alert(r.error); return }
+  const r = await (await fetch('/api/queued/' + id)).json(); if (!r.ok) { rvAlert(r.error); return }
   QID = id; document.getElementById('q-title').textContent = r.title + ' · ' + r.resume_folder;
-  document.getElementById('q-to').value = r.to_email; document.getElementById('q-cc').value = r.cc_emails; document.getElementById('q-subject').value = r.subject; document.getElementById('q-body').value = r.body;
+  document.getElementById('q-to').value = r.to_email; document.getElementById('q-cc').value = r.cc_emails; document.getElementById('q-subject').value = r.subject; document.getElementById('q-body').value = r.body; document.getElementById('q-body').dispatchEvent(new Event('input'));
   document.getElementById('q-msg').textContent = '';
 }
 async function saveQueued(b){
@@ -966,7 +748,7 @@ export function sentPage() {
                            WHERE a.status IN ('sent','failed','skipped','sending','expired') ORDER BY COALESCE(a.sent_at, a.updated_at) DESC LIMIT 2000`).all();
   const cap = (x) => x ? x[0].toUpperCase() + x.slice(1) : '';
   return `${hero('sent', 'Sent', 'Every email that went out, failed, expired or was skipped.')}
-<div class="filterbar"><input type="search" placeholder="Filter ${rows.length} emails" oninput="for(const r of document.querySelectorAll('#st .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
+<div class="filterbar"><input type="search" placeholder="Filter ${rows.length} emails" aria-label="Filter ${rows.length} emails" oninput="for(const r of document.querySelectorAll('#st .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
  <span class="sp"></span><a class="quiet" href="/history">Sent_History.md</a><a class="quiet" href="/export/applications.csv">Export CSV</a></div>
 <div class="grp" id="st">${rows.map(r => `<a class="row tall" href="/app/${r.id}"><span class="lbl"><span>${esc(r.title ?? '')}</span>
   <span class="sub one">${esc(r.recruiter_name ? `${r.recruiter_name} · ` : '')}${esc(r.to_email)} · ${esc(resumeLabel(r.resume_folder))} ${r.match_score ?? '?'}%${r.locked ? ' · locked' : ''}</span>${r.error ? `<span class="sub" style="color:var(--bad)">${esc(r.error)}</span>` : ''}</span>
@@ -994,60 +776,64 @@ export function vendorsPage() {
   const tally = Object.entries(VENDOR_STATUSES).map(([k, v]) => [v, withStatus.filter(s => s.status === k).length]).filter(([, c]) => c);
   return `${hero('vendors', 'Vendors', 'Recruiters you have emailed, where things stand with each one, and which resume they always get.')}
 <div class="section">Recruiters <span class="aside">${tally.length ? tally.map(([v, c]) => `${v} ${c}`).join(' · ') : `${vendors.length} emailed`}</span></div>
-${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder="Filter recruiters" oninput="for(const r of document.querySelectorAll('#vt>details'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'"></div>` : ''}
+${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder="Filter recruiters" aria-label="Filter recruiters" oninput="for(const r of document.querySelectorAll('#vt>details'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'"></div>` : ''}
 <div class="grp" id="vt">${vendors.map(v => { const s = statuses.get(v.addr); const l = lockOf(v.addr);
   return `<details class="disc"><summary class="row tall"><span class="lbl"><span>${esc(v.addr)}</span><span class="sub one">${v.sends} sent${v.last_sent ? ` · last ${esc(v.last_sent.slice(0, 10))}` : ''} · ${weekly.get(v.addr) ?? 0} this week${l ? ` · locked to ${esc(resumeLabel(l.resume_folder))}` : ''}</span></span>
    ${s ? `<span class="pill ${s.status}">${esc(VENDOR_STATUSES[s.status])}</span>` : ''}<span class="chev"></span></summary>
    <div class="disc-body">
     <div class="row" data-addr="${esc(v.addr)}"><label>Status</label><span style="flex:1"></span><span class="popup"><select>${opts(s?.status)}</select></span>
-     <input type="date" value="${esc(s?.on_date ?? '')}" style="flex:none;width:130px"><input placeholder="Note" value="${esc(s?.note ?? '')}" style="flex:none;width:160px"><button class="small" onclick="vsave(this)">Save</button></div>
-    ${l ? '' : `<div class="row"><span class="lbl"><span>Resume lock</span><span class="sub">Always send this recruiter the same resume.</span></span><button class="small" onclick="lockPrefill('${esc(parseVendor(v.addr)?.domain ?? '')}')">Lock…</button></div>`}
-    <div class="row"><span class="lbl"><span>Block</span><span class="sub">Never email this address again. Its postings and unsent emails are skipped.</span></span><button class="small danger" onclick="blockAddr('${esc(v.addr)}',this)">Block…</button></div>
+     <input type="text" value="${esc(s?.on_date ?? '')}" placeholder="YYYY-MM-DD" inputmode="numeric" maxlength="10" autocomplete="off" aria-label="Date" style="flex:none;width:112px"><input type="text" placeholder="Note" value="${esc(s?.note ?? '')}" style="flex:none;width:160px"><button type="button" class="small" onclick="vsave(this)">Save</button></div>
+    ${l ? '' : `<div class="row"><span class="lbl"><span>Resume lock</span><span class="sub">Always send this recruiter the same resume.</span></span><button type="button" class="small" onclick="lockPrefill('${esc(parseVendor(v.addr)?.domain ?? '')}')">Lock…</button></div>`}
+    <div class="row"><span class="lbl"><span>Block</span><span class="sub">Never email this address again. Its postings and unsent emails are skipped.</span></span><button type="button" class="small danger" onclick="blockAddr('${esc(v.addr)}',this)">Block…</button></div>
    </div></details>`; }).join('') || '<div class="empty-row">No recruiters yet. They appear after your first send.</div>'}</div>
 <div class="section">Resume locks <span class="aside">${locks.length}</span></div>
 <div class="grp">
- ${locks.map(l => `<div class="row"><span class="ico">${icon('lock')}</span><span class="lbl"><span>${esc(lockLabel(l))}</span><span class="sub one">${esc(resumeLabel(l.resume_folder))}${l.reason ? ` · ${esc(l.reason)}` : ''}</span></span><button class="small" onclick="simple('/api/locks/${l.id}/delete',{},this,'Remove this lock?')">Remove</button></div>`).join('')}
+ ${locks.map(l => `<div class="row"><span class="ico">${icon('lock')}</span><span class="lbl"><span>${esc(lockLabel(l))}</span><span class="sub one">${esc(resumeLabel(l.resume_folder))}${l.reason ? ` · ${esc(l.reason)}` : ''}</span></span><button type="button" class="small" onclick="simple('/api/locks/${l.id}/delete',{},this,'Remove this lock?')">Remove</button></div>`).join('')}
  <details class="disc" id="lock-fold"><summary class="row"><span class="lbl"><span style="color:var(--accent)">Add a lock…</span></span><span class="chev"></span></summary><div class="disc-body" id="lockform">
-  <div class="row"><label>Domain</label><input name="domain" placeholder="company.com"></div>
-  <div class="row"><label>Recruiter</label><input name="local" placeholder="Optional, part before @"></div>
+  <div class="row"><label>Domain</label><input type="text" name="domain" placeholder="company.com"></div>
+  <div class="row"><label>Recruiter</label><input type="text" name="local" placeholder="Optional, part before @"></div>
   <div class="row"><label>Resume</label><span style="flex:1"></span><span class="popup"><select name="resume_folder">${folders.map(f => `<option value="${esc(f.folder)}">${esc(f.name)}</option>`).join('')}</select></span></div>
-  <div class="row"><label>Reason</label><input name="reason" placeholder="Submitted me to Acme"></div>
-  <div class="btnrow" style="margin-top:6px"><span class="meta">A lock beats matching. If the locked resume fits under ${config.minMatchScore}%, the email is held.</span><span class="sp"></span><button class="primary" onclick="simple('/api/locks', lockFields(), this)">Add Lock</button></div>
+  <div class="row"><label>Reason</label><input type="text" name="reason" placeholder="Submitted me to Acme"></div>
+  <div class="btnrow" style="margin-top:6px"><span class="meta">A lock beats matching. If the locked resume fits under ${config.minMatchScore}%, the email is held.</span><span class="sp"></span><button type="button" class="primary" onclick="simple('/api/locks', lockFields(), this)">Add Lock</button></div>
  </div></details>
 </div>
 <div class="section">Blocked <span class="aside">${black.length}</span></div>
 <div class="grp">
- ${black.map(b => `<div class="row"><span class="ico">${icon('block')}</span><span class="lbl"><span>${esc(b.term)}</span></span><button class="small" onclick="blrm(${b.id},this)">Remove</button></div>`).join('')}
- <div class="row"><input id="bl-term" placeholder="Domain, address or company name" style="text-align:left"><button class="small" onclick="bladd(this)">Block</button></div>
+ ${black.map(b => `<div class="row"><span class="ico">${icon('block')}</span><span class="lbl"><span>${esc(b.term)}</span></span><button type="button" class="small" onclick="blrm(${b.id},this)">Remove</button></div>`).join('')}
+ <div class="row"><input type="text" id="bl-term" placeholder="Domain, address or company name" style="text-align:left"><button type="button" class="small" onclick="bladd(this)">Block</button></div>
 </div>
 <p class="foot">An address blocks that one person; a domain (acme.com) blocks everyone there. Blocked recruiters are never emailed or CC'd, by any route: their postings, drafts and queued emails are skipped, and the final send refuses them.</p>
 <div class="grp" style="margin-top:20px"><details class="disc"><summary class="row"><span class="lbl"><span>Change history</span></span><span class="val">${audit.length}</span><span class="chev"></span></summary><div class="disc-body">
  ${audit.map(r => `<div class="meta" style="padding:3px 0">${esc(r.ts)} · ${esc(r.action)} · ${esc(String(r.detail).slice(0, 140))}</div>`).join('') || '<p class="meta">None.</p>'}</div></details></div>
 <script>
-async function blockAddr(addr, b){ if (!confirm('Block ' + addr + '? RUNE will never send them anything, and their unsent emails are skipped.')) return;
-  b.disabled = true; const j = await post('/api/blacklist', { term: addr }); if (j.ok) location.reload(); else { b.disabled = false; alert(j.error) } }
+async function blockAddr(addr, b){ if (!(await rvConfirm('Block ' + addr + '? Runevoid will never send them anything, and their unsent emails are skipped.', { ok: 'Block' }))) return;
+  b.disabled = true; const j = await post('/api/blacklist', { term: addr }); if (j.ok) location.reload(); else { b.disabled = false; rvAlert(j.error) } }
 async function bladd(b){ const t = document.getElementById('bl-term').value; if (!t.trim()) return; b.disabled = true;
-  const j = await post('/api/blacklist', { term: t }); if (j.ok) { if (j.skipped) alert(j.skipped + ' open draft(s) from them were skipped.'); location.reload() } else { alert(j.error); b.disabled = false } }
-async function blrm(id, a){ if (!confirm('Unblock this recruiter?')) return; const j = await post('/api/blacklist/' + id + '/delete'); if (j.ok) location.reload(); else alert(j.error) }
+  const j = await post('/api/blacklist', { term: t }); if (j.ok) { if (j.skipped) await rvAlert(j.skipped + ' open draft(s) from them were skipped.'); location.reload() } else { rvAlert(j.error); b.disabled = false } }
+async function blrm(id, a){ if (!(await rvConfirm('Unblock this recruiter?', { ok: 'Unblock' }))) return; const j = await post('/api/blacklist/' + id + '/delete'); if (j.ok) location.reload(); else rvAlert(j.error) }
 function lockFields(){ const o = {}; document.querySelectorAll('#lockform [name]').forEach(e => o[e.name] = e.value); return o }
 function lockPrefill(d){ const f = document.getElementById('lock-fold'); if (f) f.open = true; document.querySelector('#lockform [name=domain]').value = d; document.querySelector('#lockform [name=domain]').focus() }
 async function vsave(b){
   const box = b.closest('[data-addr]'); const [sel, date, note] = box.querySelectorAll('select,input');
-  b.disabled = true; const j = await post('/api/vendor-status', { address: box.dataset.addr, status: sel.value || 'clear', on_date: date.value, note: note.value });
-  if (j.ok) location.reload(); else { alert(j.error); b.disabled = false }
+  const d = date.value.trim();
+  const t = new Date(d + 'T00:00:00Z');   // invalid dates (2026-13-45) give NaN, and toISOString() would throw
+  const valid = /^\\d{4}-\\d{2}-\\d{2}$/.test(d) && !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === d;
+  if (d && !valid) { await rvAlert('Enter the date as YYYY‑MM‑DD, for example 2026‑11‑21. Leave it empty for today.'); date.focus(); return }
+  b.disabled = true; const j = await post('/api/vendor-status', { address: box.dataset.addr, status: sel.value || 'clear', on_date: d, note: note.value });
+  if (j.ok) location.reload(); else { rvAlert(j.error); b.disabled = false }
 }
 </script>`;
 }
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
 
-export function logsPage(view, status) {
+export function logsPage(view) {
   if (view === 'scraped') return scrapedPage({ show: '', day: 'all' });
   const rows = db.prepare(`SELECT * FROM events ORDER BY id DESC LIMIT 1500`).all();
-  return `<div class="filterbar"><input type="search" placeholder="Filter the log" oninput="for(const r of document.querySelectorAll('#lg .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
+  return `<div class="filterbar"><input type="search" placeholder="Filter the log" aria-label="Filter the log" oninput="for(const r of document.querySelectorAll('#lg .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
  <span class="sp"></span><a class="quiet" href="/export/events.csv">Export Log</a><a class="quiet" href="/export/jobs.csv">Export Postings</a></div>
 <div class="grp" id="lg">${rows.map(r => `<div class="row">${r.level === 'error' ? '<span class="dot"></span>' : r.level === 'warn' ? '<span class="dot ring"></span>' : '<span class="dot grey"></span>'}
-  <span class="lbl wrap"><div>${esc(r.message)}</div><span class="sub one">${esc(r.ts)} · ${esc(r.type)}${r.job_id ? ` · #${r.job_id}` : ''}</span></span></div>`).join('') || '<div class="empty-row">Nothing logged yet.</div>'}</div>`;
+  <span class="lbl wrap"><span>${esc(r.message)}</span><span class="sub one">${esc(r.ts)} · ${esc(r.type)}${r.job_id ? ` · #${r.job_id}` : ''}</span></span></div>`).join('') || '<div class="empty-row">Nothing logged yet.</div>'}</div>`;
 }
 
 // ── Scraped: every posting the bot has read, with what it decided ─────────────
@@ -1086,7 +872,7 @@ export function scrapedPage({ show = '', day = 'today', q = '' } = {}) {
     };
   };
   const url = (o) => '/scraped?' + new URLSearchParams({ show, day, q, ...o }).toString();
-  const chip = (on, href, label) => `<a href="${esc(href)}" class="${on ? 'on' : ''}">${label}</a>`;
+  const chip = (on, href, label) => `<a href="${esc(href)}"${on ? ' class="on" aria-current="true"' : ''}>${label}</a>`;
   const open = (r) => !r.app_id ? '' : ['draft', 'held', 'failed'].includes(r.app_status) ? `<a href="/${r.source === 'manual' ? 'manual' : 'review'}?open=${r.app_id}">Open Draft</a>` : `<a href="/app/${r.app_id}">View Email</a>`;
   const actionScript = rows.some(r => r.status === 'low_match') ? `<script>
 async function applyAnyway(id, button) {
@@ -1102,19 +888,19 @@ async function applyAnyway(id, button) {
     const tab = document.querySelector('.sb-item[href="/review"]');
     if (tab) { let b = tab.querySelector('b'); if (!b) { b = document.createElement('b'); b.textContent = '0'; tab.append(b) } b.textContent = Number(b.textContent) + 1 }
   } catch (error) {
-    button.disabled = false; button.textContent = 'Apply Anyway'; alert(error.message);
+    button.disabled = false; button.textContent = 'Apply Anyway'; rvAlert(error.message);
   }
 }</script>` : '';
   return `<div class="filterbar"><div class="seg">${chip(day === 'hour', url({ day: 'hour' }), 'Last Hour')}${chip(day === 'today', url({ day: 'today' }), 'Today')}${chip(day === 'all', url({ day: 'all' }), 'All Time')}</div>
   <span class="sp"></span>
-  <form method="get" action="/scraped" style="margin:0"><input type="hidden" name="show" value="${esc(show)}"><input type="hidden" name="day" value="${esc(day)}"><input type="search" name="q" value="${esc(q)}" placeholder="Filter postings"></form>
+  <form method="get" action="/scraped" style="margin:0"><input type="hidden" name="show" value="${esc(show)}"><input type="hidden" name="day" value="${esc(day)}"><input type="search" name="q" value="${esc(q)}" placeholder="Filter postings" aria-label="Filter postings"><button type="submit" class="sr-only">Filter</button></form>
   <a class="quiet" href="/export/jobs.csv">Export CSV</a></div>
- <div class="filterbar"><div class="seg">${chip(!show, url({ show: '' }), `All <b>${total}</b>`)}${tally.map(([k, label, c]) => chip(show === k, url({ show: k }), `${label} <b>${c}</b>`)).join('')}${chip(show === 'manual', url({ show: 'manual' }), `Manual <b>${manualCount}</b>`)}</div></div>
+ <div class="filterbar"><div class="chips" role="group" aria-label="Show">${chip(!show, url({ show: '' }), `All <b>${total}</b>`)}${tally.map(([k, label, c]) => chip(show === k, url({ show: k }), `${label} <b>${c}</b>`)).join('')}${chip(show === 'manual', url({ show: 'manual' }), `Manual <b>${manualCount}</b>`)}</div></div>
  <div class="grp">${rows.map(r => {
     const info = matchInfo(r);
     const missing = r.status !== 'low_match' || !info.missing.length ? '' : `<span class="sub one">Missing: ${info.missing.slice(0, 12).map(esc).join(', ')}${info.missing.length > 12 ? '…' : ''}</span>`;
-    const action = `${open(r)}${r.status === 'low_match' ? ` <button class="small" onclick="applyAnyway(${r.id},this)" title="Draft it with your best resume, whatever the match. It still waits in Review for your approval.">Apply Anyway</button>` : ''}`;
-    return `<div class="row tall"><span class="lbl wrap"><div>${jobTitle(r)}</div>
+    const action = `${open(r)}${r.status === 'low_match' ? ` <button type="button" class="small" onclick="applyAnyway(${r.id},this)" title="Draft it with your best resume, whatever the match. It still waits in Review for your approval.">Apply Anyway</button>` : ''}`;
+    return `<div class="row tall"><span class="lbl wrap"><span>${jobTitle(r)}</span>
      <span class="sub one">#${r.id} · ${esc((r.posted_raw || '').replace(/\s+/g, ' ').trim())}${r.company ? ' · ' + esc(r.company) : ''}${(r.location_jd || r.location_listed) ? ' · ' + esc(r.location_jd || r.location_listed) : ''}${r.recruiter_email ? ' · ' + esc(r.recruiter_email) : ''}</span>
      <span class="sub clamp">${esc(r.status.replace(/_/g, ' '))}${r.status_reason ? ` · ${esc(r.status_reason)}` : ''}</span>${missing}</span>
      ${info.score != null ? `<span class="val">${info.score}%</span>` : ''}${action ? `<span class="nw">${action}</span>` : ''}</div>`;
@@ -1132,28 +918,28 @@ export function healthPage() {
   const errors24 = n(`SELECT COUNT(*) n FROM events WHERE level = 'error' AND ts >= datetime('now','localtime','-1 day')`);
   const stuck = n(`SELECT COUNT(*) n FROM applications WHERE status = 'sending'`);
   let dbSize = '';
-  try { dbSize = `${(statSync(join(config.dataDir, 'nvoids-bot.db')).size / 1e6).toFixed(1)} MB` } catch {}
+  try { dbSize = `${(statSync(DB_PATH).size / 1e6).toFixed(1)} MB` } catch { /* size unknown: leave blank */ }
   const ramp = [0, 2, 4, 6, 8].map(d => { const x = new Date(Date.now() + d * 86_400_000); return `${ymd(x).slice(5)}: ${dailyCap(x)}` }).join(' · ');
-  const check = (ok, title, detail, right = '') => `<div class="row tall"><span class="st ${ok === true ? 'ok' : ok === false ? 'bad' : 'warn'}"></span><span class="lbl wrap"><div>${title}</div><span class="sub">${detail}</span></span>${right}</div>`;
+  const check = (ok, title, detail, right = '') => `<div class="row tall"><span class="st ${ok === true ? 'ok' : ok === false ? 'bad' : 'warn'}"></span><span class="lbl wrap"><span>${title}</span><span class="sub">${detail}</span></span>${right}</div>`;
   const watcherPaused = getState('watcher_paused', '0') === '1';
   return `${hero('health', 'Status', 'Connections, the watcher, and your data.')}
 <div class="section">Sending</div>
 <div class="grp">
- ${check(emailConfigured(), 'Gmail', emailConfigured() ? `${esc(config.gmailUser)} <span id="vmsg"></span>` : 'GMAIL_USER / GMAIL_APP_PASSWORD missing in .env', emailConfigured() ? '<button class="small" onclick="verify(this)">Test Login</button>' : '')}
+ ${check(emailConfigured(), 'Gmail', emailConfigured() ? `${esc(config.gmailUser)} <span id="vmsg"></span>` : 'GMAIL_USER / GMAIL_APP_PASSWORD missing in .env', emailConfigured() ? '<button type="button" class="small" onclick="verify(this)">Test Login</button>' : '')}
  ${check(!c.q.paused, 'Sending', c.q.paused ? 'Paused' : 'On', `<label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="simple('/api/pause-sending',{on:!this.checked},this)" aria-label="Sending"><span></span></label>`)}
  ${check(c.q.dryRun ? null : true, 'Dry run', c.q.dryRun ? 'On, so nothing is really sent (DRY_RUN=true in .env)' : 'Off, so emails really go out')}
  ${check(stuck ? false : true, 'Stuck sends', stuck ? `${stuck} email(s) stuck in “sending”` : 'None')}
  ${check(true, 'Daily cap', `${c.q.dailyCapSentToday} of ${c.q.cap} today · ${c.q.sentToday} sent in total · next days ${ramp}`)}
 </div>
 <div class="section">Cc on every email</div>
-<div class="grp"><div class="row"><input id="cc-emails" type="text" value="${esc(getCcEmails().join(', '))}" placeholder="name@example.com, another@example.com" style="text-align:left"><button class="small" onclick="saveCc(this)">Save</button></div></div>
+<div class="grp"><div class="row"><input id="cc-emails" type="text" value="${esc(getCcEmails().join(', '))}" placeholder="name@example.com, another@example.com" style="text-align:left"><button type="button" class="small" onclick="saveCc(this)">Save</button></div></div>
 <p class="foot"><span id="cc-msg">Comma-separated. Overrides CC_EMAILS in .env.</span></p>
 <div class="section">Watcher and data</div>
 <div class="grp">
  ${check(watcherPaused ? null : pollAgeMin !== null && pollAgeMin < 10 && getState('last_poll_ok', '1') === '1', 'nvoids watcher', watcherPaused ? 'Paused' : lastPoll ? `Last check ${esc(lastPoll)} (${pollAgeMin} min ago)${getState('last_poll_ok', '1') === '1' ? '' : ', failed'}` : 'Never checked', `<label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="simple('/api/pause-watcher',{on:!this.checked},this)" aria-label="Watcher"><span></span></label>`)}
  ${(() => { const b = breakerState(); return check(b.until > Date.now() ? false : b.failures ? null : true, 'Circuit breaker', b.until > Date.now() ? `Open after ${b.failures} failed checks; retrying at ${new Date(b.until).toLocaleTimeString()}` : b.failures ? `${b.failures} failed check(s) in a row` : 'Closed, nvoids is reachable') })()}
  ${check(true, 'nvoids layout', getState('nvoids_layout', '') === 'old' ? 'Old site (job_details.jsp), handled' : getState('nvoids_layout', '') ? 'New site (j_details.jsp)' : 'Not checked yet')}
- ${check(true, 'Rescue missed postings', `Read back the listing after the Mac slept. <span id="rmsg"></span>`, `<input id="rh" type="number" min="1" max="48" value="6" style="flex:none;width:44px" aria-label="Hours"><span class="meta">hours</span><button class="small" onclick="doRescue(this)">Rescue</button>`)}
+ ${check(true, 'Rescue missed postings', `Read back the listing after the Mac slept. <span id="rmsg"></span>`, `<input id="rh" type="number" min="1" max="48" value="6" style="flex:none;width:44px" aria-label="Hours"><span class="meta">hours</span><button type="button" class="small" onclick="doRescue(this)">Rescue</button>`)}
  ${check(resumes.length > 0, 'Resumes', resumes.length ? `${resumes.length} found: ${resumes.map(r => esc(r.name)).join(', ')}` : `None found in ${esc(config.resumesDir)}`)}
  ${check(existsSync(join(ROOT, 'resume-lanes.json')) ? true : null, 'Resume lanes', 'resume-lanes.json')}
  ${check(errors24 ? null : true, 'Errors in the last 24 hours', `${errors24}`, errors24 ? '<a class="quiet" href="/logs">Show Log</a>' : '')}
@@ -1171,4 +957,4 @@ async function saveCc(b){ const input = document.getElementById('cc-emails'), ms
 async function verify(b){ b.disabled = true; const j = await post('/api/verify-email'); b.disabled = false; const m = document.getElementById('vmsg'); m.textContent = j.ok ? 'login OK' : j.error; m.className = j.ok ? 'ok' : 'bad' }</script>`;
 }
 
-export { CSS, CLIENT_JS };
+export { CLIENT_JS };

@@ -506,7 +506,7 @@ export async function sendTestToSelf(resumePath) {
 
 // Human-readable log, appended right after each real send. Never read back by the program.
 export function appendHistory(app, job) {
-  const header = existsSync(HISTORY_PATH) ? '' : '# Sent History\n\nEvery email RUNE actually sent, oldest first.\n\n---\n\n';
+  const header = existsSync(HISTORY_PATH) ? '' : '# Sent History\n\nEvery email Runevoid actually sent, oldest first.\n\n---\n\n';
   const jd = (job.jd_text ?? '').replace(/```/g, "'''");
   const entry = `${header}## ${app.sent_at ?? now()} — ${job.title}
 

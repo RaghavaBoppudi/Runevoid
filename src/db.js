@@ -7,9 +7,18 @@
 //   state         small key/value store (last seen nvoids id, pause switches, pacing clock)
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
+import { existsSync, renameSync } from 'node:fs';
 import { config } from './config.js';
 
-export const db = new DatabaseSync(join(config.dataDir, 'nvoids-bot.db'));
+export const DB_PATH = join(config.dataDir, 'runevoid.db');
+
+// One-time move from the old file name (nvoids-bot.db) so all history carries over. WAL side files go with it.
+const OLD_DB = join(config.dataDir, 'nvoids-bot.db');
+if (!existsSync(DB_PATH) && existsSync(OLD_DB)) {
+  for (const ext of ['', '-wal', '-shm']) if (existsSync(OLD_DB + ext)) renameSync(OLD_DB + ext, DB_PATH + ext);
+}
+
+export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
 PRAGMA journal_mode = WAL;

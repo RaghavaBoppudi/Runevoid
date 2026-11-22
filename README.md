@@ -1,4 +1,4 @@
-# RUNE
+# Runevoid
 
 Watches [nvoids.com](https://nvoids.com) every minute for new AI/ML requirements. For each one it
 picks the best resume from the Word files in your resume folder and drafts an email to the recruiter
@@ -31,7 +31,7 @@ every 60s ─► nvoids listing ─► new job ids only ─► open each posting
 ## Setup (one time)
 
 1. **Gmail App Password.** In your Google Account, turn on 2-Step Verification, then open
-   *Security → App passwords*, create one called "nvoids bot", and copy the 16-character code.
+   *Security → App passwords*, create one called "Runevoid", and copy the 16-character code.
 2. Copy `.env.example` to `.env`. Fill in `GMAIL_USER`, `GMAIL_APP_PASSWORD` and `SENDER_NAME`.
    For your first day, set `DRY_RUN=true` so the bot does everything except send.
 3. Check **`templates/email.txt`** (the email format) and set `SENDER_PHONE`, `SENDER_EMAIL` and
@@ -44,7 +44,7 @@ every 60s ─► nvoids listing ─► new job ids only ─► open each posting
 4. Run it:
 
    ```bash
-   cd "C:\path\to\nvoids-bot"
+   cd ~/Documents/Runevoid
    npm install
    npm start
    ```
@@ -69,6 +69,15 @@ that, each check only opens postings newer than the last one it saw.
 Header controls: **Pause sending** (the queue waits), **Pause watcher** (stops checking nvoids),
 **Check now**, **Test email to me**, a countdown to the next send, sent today / daily cap, and a
 **DRY RUN** badge when it's on. The pause switches survive restarts.
+
+Look and sound: the dashboard is drawn as a 1-bit desktop window (`public/runevoid.css`, set in Archivo,
+bundled in `public/fonts` under the SIL Open Font License). Buttons and keys make mechanical click sounds,
+synthesised in the browser by `public/clicks.js`; the speaker button in the title bar turns them off.
+The dashboard opens in the light theme; the sun/moon button beside it switches to dark (`public/theme.js`).
+The browser remembers both choices. Scrollbars are drawn by the page (`public/scrollbars.js`) so they look the
+same in every browser; text boxes grow with their text instead of scrolling.
+Messages, confirmations and drop-down menus are drawn by the page too (`public/dialogs.js`, `public/menus.js`),
+and the app icons (`public/favicon.svg`, `favicon-32.png`, `apple-touch-icon.png`) are 1-bit pixel art.
 
 The CC list can also be set in `.env` as `CC_EMAILS`. Once you save a list in the dashboard's Health
 tab, that saved list takes precedence over `.env`; clear the field and save to remove all CC recipients.
@@ -123,7 +132,7 @@ similarity. Each draft shows *why* its resume was picked.
 
 ## Files
 
-All in `data/` (gitignored): `nvoids-bot.db` (SQLite: jobs, applications, locks, audit, log),
+All in `data/` (gitignored): `runevoid.db` (SQLite: jobs, applications, locks, audit, log),
 `Sent_History.md` (human-readable record of every email sent), `models/` (the local AI
 model, about 90 MB), and `resume-cache/` (local extracted resume text and matching vectors,
 reused until a resume file changes). The resume cache stays on your computer. CSV downloads:

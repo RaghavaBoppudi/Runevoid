@@ -2,7 +2,7 @@
 // the JSON API the pages call.
 //
 // Security (this page can send email): listens on 127.0.0.1 only; rejects any Host header that isn't
-// localhost (DNS rebinding); every POST must carry the X-Nvoids-Bot header (a custom header other websites
+// localhost (DNS rebinding); every POST must carry the X-Runevoid header (a custom header other websites
 // cannot send without a CORS preflight, which we never answer) and, if present, a same-origin Origin.
 // Job text comes from the internet and is always HTML-escaped.
 import express from 'express';
@@ -17,7 +17,7 @@ import { queueStatus, setSendingPaused } from './mailer.js';
 import { approve, cancelQueued, skip, resolveHold, setLock, removeLock, rematch, rematchAll, rematchSome, rematchStatus, stopRematch, editQueued, setVendorStatus, addBlacklist, removeBlacklist } from './actions.js';
 import { addManualJob } from './manual.js';
 import {
-  esc, table, jobTitle, layout, counts, reviewPage, REVIEW_SCRIPT, draftView, emailView,
+  esc, table, layout, counts, reviewPage, REVIEW_SCRIPT, draftView, emailView,
   overviewPage, sentPage, vendorsPage, logsPage, healthPage,
   freshItems, scrapedPage,
 } from './ui.js';
@@ -39,7 +39,7 @@ function searchPage(qRaw) {
   if (!q) return `<div class="panel">Type an email, name, phone number, company, job title or job number in the search box above.</div>`;
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
   const digits = q.replace(/\D/g, '');
-  const isPhone = digits.length >= 6 && /^[\d\s()+.\-]+$/.test(q);
+  const isPhone = digits.length >= 6 && /^[\d\s()+.-]+$/.test(q);
   const like = (t) => `%${t.replace(/[\\%_]/g, '\\$&')}%`;
   const fields = `lower(coalesce(j.title,'') || ' ' || coalesce(j.recruiter_email,'') || ' ' || coalesce(j.recruiter_name,'') || ' ' ||
                   coalesce(j.company,'') || ' ' || coalesce(j.location_jd,'') || ' ' || coalesce(j.location_listed,'') || ' ' ||
@@ -72,9 +72,9 @@ function searchPage(qRaw) {
     ['Recruiter', j => `${esc(j.recruiter_name ?? '')}<br>${esc(j.to_email || j.recruiter_email || '')}${j.company ? `<div class="meta">${esc(j.company)}</div>` : ''}`],
     ['Status', j => `<b>${esc(STATUS_LABEL[j.app_status] ?? j.status)}</b>${j.sent_at ? `<div class="meta">sent ${esc(j.sent_at)}</div>` : ''}${j.resume_folder ? `<div class="meta">folder ${esc(j.resume_folder)} (${j.match_score ?? '?'}%)</div>` : ''}`],
     ['Scraped', j => esc(j.scraped_at)], ['', openLink]], jobRows) + `</div>` : '';
-  const locksTable = locks.length ? `<div class="panel" style="margin-top:12px"><h3>Vendor locks (${locks.length})</h3>` + table([
+  const locksTable = locks.length ? `<div class="panel"><h3>Vendor locks (${locks.length})</h3>` + table([
     ['Vendor', l => esc(`${l.local || '*'}@${l.domain}`)], ['Folder', l => esc(l.resume_folder)], ['Reason', l => esc(l.reason ?? '')], ['', () => `<a href="/vendors">manage</a>`]], locks) + `</div>` : '';
-  const eventsTable = events.length ? `<div class="panel" style="margin-top:12px"><h3>Log entries (${events.length}${events.length >= 50 ? '+' : ''})</h3>` + table([
+  const eventsTable = events.length ? `<div class="panel"><h3>Log entries (${events.length}${events.length >= 50 ? '+' : ''})</h3>` + table([
     ['Time', e => esc(e.ts)], ['Event', e => esc(e.type)], ['Job', e => e.job_id ? `#${e.job_id}` : ''], ['Message', e => esc(e.message)]], events) + `</div>` : '';
   const none = !jobRows.length && !locks.length && !events.length ? `<div class="panel">Nothing found for “${esc(q)}”.</div>` : '';
   return head + jobsTable + locksTable + eventsTable + none;
@@ -93,11 +93,11 @@ const LOCAL_HOSTS = new Set([`127.0.0.1:${config.port}`, `localhost:${config.por
 function guard(req, res, next) {
   if (!LOCAL_HOSTS.has(String(req.headers.host ?? '').toLowerCase())) return res.status(403).send('Forbidden host');
   if (req.method === 'POST') {
-    if (req.headers['x-nvoids-bot'] !== '1') return res.status(403).json({ ok: false, error: 'Missing dashboard header' });
+    if (req.headers['x-runevoid'] !== '1') return res.status(403).json({ ok: false, error: 'Missing dashboard header' });
     const origin = req.headers.origin;
     if (origin && !LOCAL_HOSTS.has(origin.replace(/^https?:\/\//, '').toLowerCase())) return res.status(403).json({ ok: false, error: 'Cross-site request refused' });
   }
-  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'");
   res.setHeader('X-Frame-Options', 'DENY');
   next();
 }
@@ -107,6 +107,7 @@ const ok = (fn) => async (req, res) => {
   catch (e) { res.json({ ok: false, error: e.message }); }
 };
 
+const notFound = (text) => `<div class="empty"><h3>Not found</h3><p>${text}</p><p><a href="/">Go to Overview</a></p></div>`;
 const appById = (id) => db.prepare(`SELECT * FROM applications WHERE id = ?`).get(Number(id));
 const jobById = (id) => db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(Number(id));
 
@@ -116,6 +117,7 @@ export function startServer() {
   app.use(guard);
   app.use(express.json({ limit: '300kb' }));
   app.use('/static', express.static(join(ROOT, 'public'), { maxAge: '7d', index: false }));
+  app.get('/favicon.ico', (_req, res) => res.sendFile(join(ROOT, 'public', 'favicon-32.png')));
 
   // Pages
   app.get('/', (_req, res) => res.send(layout('overview', overviewPage())));
@@ -124,19 +126,19 @@ export function startServer() {
   app.get('/sent', (_req, res) => res.send(layout('sent', sentPage())));
   app.get('/scraped', (req, res) => res.send(layout('scraped', scrapedPage({ show: String(req.query.show ?? ''), day: String(req.query.day ?? 'today'), q: String(req.query.q ?? '').slice(0, 200) }))));
   app.get('/vendors', (_req, res) => res.send(layout('vendors', vendorsPage())));
-  app.get('/logs', (req, res) => res.send(layout('logs', logsPage(String(req.query.view ?? ''), typeof req.query.status === 'string' ? req.query.status : ''))));
+  app.get('/logs', (req, res) => res.send(layout('logs', logsPage(String(req.query.view ?? '')))));
   app.get('/health', (_req, res) => res.send(layout('health', healthPage())));
   app.get('/search', (req, res) => res.send(layout('', searchPage(req.query.q), { searchText: String(req.query.q ?? '') })));
   app.get('/app/:id', (req, res) => {
     const a = appById(req.params.id);
-    if (!a) return res.send(layout('', `<div class="panel">Not found.</div>`));
+    if (!a) return res.status(404).send(layout('', notFound(`There is no email #${esc(req.params.id)}.`)));
     const j = jobById(a.job_id);
     if (['draft', 'held', 'failed'].includes(a.status)) return res.redirect(`/${j.source === 'manual' ? 'manual' : 'review'}?open=${a.id}`);
     res.send(layout('sent', emailView(a, j)));
   });
   app.get('/history', (_req, res) => {
     const text = existsSync(HISTORY_PATH) ? readFileSync(HISTORY_PATH, 'utf8') : 'Nothing sent yet.';
-    res.send(layout('sent', `<div class="panel fill"><h3>Sent_History.md</h3><div class="meta">${esc(HISTORY_PATH)}</div><div class="scroll"><pre>${esc(text)}</pre></div></div>`));
+    res.send(layout('sent', `<div class="panel"><h3>Sent_History.md</h3><div class="meta">${esc(HISTORY_PATH)}</div><pre>${esc(text)}</pre></div>`));
   });
   // Old addresses → new tabs
   for (const [from, to] of [['/drafts', '/review'], ['/add', '/manual'], ['/applied', '/sent'], ['/log', '/logs'], ['/jobs', '/scraped']]) app.get(from, (_req, res) => res.redirect(to));
@@ -168,7 +170,7 @@ export function startServer() {
     const sql = exportsSql[req.params.name];
     if (!sql) return res.status(404).send('Not found');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="rune-${req.params.name}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="runevoid-${req.params.name}"`);
     res.send('﻿' + toCsv(db.prepare(sql).all()));
   });
 
@@ -222,6 +224,13 @@ export function startServer() {
     await sendTestToSelf(file.path);
     logEvent('info', 'test_send', null, `Test email sent to ${config.gmailUser} with resume ${file.name}`);
   }));
+
+  // Anything else: the themed "not found" page; plain 404s for API calls and static files.
+  app.use((req, res) => {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ ok: false, error: 'Not found' });
+    if (req.path.startsWith('/static/')) return res.status(404).end();
+    res.status(404).send(layout('', notFound(`There is no page at ${esc(req.path)}.`)));
+  });
 
   return new Promise(resolve => {
     const server = app.listen(config.port, '127.0.0.1', () => {
