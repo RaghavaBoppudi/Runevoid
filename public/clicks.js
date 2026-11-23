@@ -1,34 +1,52 @@
-// Mechanical switch sounds for the dashboard, synthesised with the Web Audio API (no audio files).
+// Dashboard sounds, synthesised with the Web Audio API (no audio files). Two families that never share a sound:
 //
-// Each sound is rendered once into an AudioBuffer from a small physical-ish model: a short bright
-// transient (the leaf/click jacket), two damped resonances (switch housing and plate), and for a
-// key-down a second, duller transient a few milliseconds later (the stem bottoming out).
-// Every press of a kind plays the same buffer at the same pitch and level, so a control sounds
-// identical each time it is used.
+//   Pointer: an early-Macintosh UI tick. A short square-wave pulse rendered through the original Mac's audio path:
+//            sample-and-hold at 22,254.5 Hz, 8-bit quantisation, then a gentle low-pass for the small built-in
+//            speaker. Every press plays the same buffer, so a control sounds identical each time.
+//
+//   Keyboard: a recorded mechanical keystroke (public/sounds/key-down.wav and key-up.wav: one recording split
+//            into press and release, so the release plays when the key actually comes up). Each press gets a
+//            small random pitch (±3%) and level (±1.5 dB) change, and Space and the large keys play lower, as
+//            their longer caps do. Until the recording has loaded, or if it can't be, a synthesised model plays:
+//            each key-down is a faint housing tick as the stem starts to travel, then the
+//            bottom-out 8–13 ms later: a bright keycap impact, a band of "thock" from the case cavity and two damped
+//            case resonances. Key-up is the lighter clack of the stem springing back to the top housing.
+//            Space and the large keys (Enter, Backspace, Shift, Tab, Caps Lock) are deeper and carry stabiliser
+//            rattle. Each class has several renders with slightly different physics; presses rotate through them
+//            at random (never the same one twice running), because identical keystrokes sound machine-gunned.
 //
 // Every buffer starts at zero amplitude and ends with a raised-cosine fade, so playback can't pop.
-// The AudioContext is created on the first pointer or key press (browsers block audio before a user
-// gesture). The on/off choice is kept in localStorage under "rv-sound".
+// The AudioContext is created on the first pointer or key press (browsers block audio before a user gesture).
+// The on/off choice is kept in localStorage under "rv-sound".
 (() => {
   'use strict';
 
   const STORE_KEY = 'rv-sound';
   const PRESSABLE = 'button, a[href], summary, select, label, input[type="checkbox"], input[type="radio"], [role="button"], [data-click], .item, .row.click';
-  const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'FnLock', 'Hyper', 'Super', 'OS']);
+  const BIG_KEYS = new Set(['Enter', 'NumpadEnter', 'Backspace', 'ShiftLeft', 'ShiftRight', 'Tab', 'CapsLock']);
+  const VARIANTS = 6;
+  // Recorded keystroke. URLs carry a content hash (set by src/ui.js) so a replaced file is fetched fresh.
+  const script = document.currentScript;
+  const SAMPLE_URLS = {
+    down: script?.dataset.keyDown || '/static/sounds/key-down.wav',
+    up: script?.dataset.keyUp || '/static/sounds/key-up.wav',
+  };
+  // Playback rate per key class: centre and random spread.
+  const KEY_PITCH = { alpha: [1, 0.03], big: [0.94, 0.02], space: [0.88, 0.02] };
 
-  // Sound recipes. Times in seconds, frequencies in Hz.
-  const RECIPES = {
-    // Pointer press on a button: crisp actuation click, then the bottom-out.
-    down: { length: 0.075, level: 0.9, click: 1, clickTau: 0.0009, ring: [[2350, 0.0045, 0.55], [3900, 0.0028, 0.35]],
-            body: [[210, 0.016, 0.5], [470, 0.009, 0.35]], bottom: { at: 0.0065, gain: 0.55, tau: 0.0012 } },
-    // Release: lighter and higher, no bottom-out.
-    up:   { length: 0.05, level: 0.5, click: 0.8, clickTau: 0.0007, ring: [[2900, 0.0035, 0.5], [4600, 0.002, 0.3]],
-            body: [[300, 0.008, 0.25]], bottom: null },
-    // Typing: like a press but tighter, so fast typing stays clean.
-    key:  { length: 0.06, level: 0.6, click: 1, clickTau: 0.0008, ring: [[2600, 0.0038, 0.5], [4200, 0.0024, 0.3]],
-            body: [[240, 0.012, 0.45], [520, 0.007, 0.3]], bottom: { at: 0.005, gain: 0.45, tau: 0.001 } },
-    keyup: { length: 0.04, level: 0.3, click: 0.7, clickTau: 0.0006, ring: [[3100, 0.003, 0.45]],
-            body: [[330, 0.006, 0.2]], bottom: null },
+  // ── Keyboard recipes. Times in seconds, frequencies in Hz. ───────────────────────────────────────────────────
+  const KEYS = {
+    alpha: { bottomAt: [0.008, 0.011], level: 0.75,
+             impact: [2200, 1.3, 0.0012], thock: [560, 2.2, 0.006, 0.8], cases: [[210, 0.018, 0.5], [980, 0.004, 0.3]], rattle: [] },
+    big:   { bottomAt: [0.009, 0.012], level: 0.85,
+             impact: [1750, 1.2, 0.0014], thock: [430, 2.0, 0.008, 0.9], cases: [[170, 0.024, 0.6], [820, 0.005, 0.3]], rattle: [0.003] },
+    space: { bottomAt: [0.010, 0.013], level: 0.95,
+             impact: [1400, 1.1, 0.0016], thock: [340, 1.8, 0.010, 1.0], cases: [[135, 0.032, 0.7], [690, 0.006, 0.3]], rattle: [0.0025, 0.006] },
+  };
+  const KEY_UP = {
+    alpha: { level: 0.42, slap: [3000, 1.5, 0.0008], cases: [[1200, 0.003, 0.25], [330, 0.008, 0.2]] },
+    big:   { level: 0.5,  slap: [2500, 1.4, 0.001],  cases: [[1000, 0.0035, 0.25], [260, 0.012, 0.25]] },
+    space: { level: 0.55, slap: [2100, 1.3, 0.0012], cases: [[850, 0.004, 0.25], [200, 0.016, 0.3]] },
   };
 
   let enabled = true;
@@ -38,8 +56,10 @@
   let out = null;
   let bank = null;
   let pressed = false;
+  let samples = null;   // { down, up } AudioBuffers once decoded
+  const last = {};
 
-  // Deterministic PRNG (mulberry32), so variants are stable between page loads.
+  // Deterministic PRNG (mulberry32), so renders are stable between page loads.
   function prng(seed) {
     return () => {
       seed = (seed + 0x6d2b79f5) | 0;
@@ -49,47 +69,116 @@
     };
   }
 
-  function render(recipe, seed) {
-    const rand = prng(seed);   // noise source only; the same seed always gives the same samples
-    const rate = ctx.sampleRate;
-    const n = Math.ceil(recipe.length * rate);
-    const buffer = ctx.createBuffer(1, n, rate);
-    const data = buffer.getChannelData(0);
+  // RBJ band-pass biquad (constant 0 dB peak gain), applied in place.
+  function bandpass(x, f, q, rate) {
+    const w = 2 * Math.PI * f / rate;
+    const alpha = Math.sin(w) / (2 * q);
+    const a0 = 1 + alpha;
+    const b0 = alpha / a0, b2 = -alpha / a0, a1 = -2 * Math.cos(w) / a0, a2 = (1 - alpha) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < x.length; i++) {
+      const y = b0 * x[i] + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x[i]; y2 = y1; y1 = y;
+      x[i] = y;
+    }
+    return x;
+  }
 
-    const ring = recipe.ring.map(([f, tau, g]) => [2 * Math.PI * f, tau, g]);
-    const body = recipe.body.map(([f, tau, g]) => [2 * Math.PI * f, tau, g]);
-    const bottomAt = recipe.bottom ? recipe.bottom.at : 0;
+  // A decaying noise burst through a band-pass, starting at `at`.
+  function burst(n, rate, rand, at, [f, q, tau], gain) {
+    const x = new Float32Array(n);
+    const start = Math.round(at * rate);
+    for (let i = start; i < n; i++) x[i] = (rand() * 2 - 1) * Math.exp(-(i - start) / rate / tau);
+    bandpass(x, f, q, rate);
+    for (let i = 0; i < n; i++) x[i] *= gain;
+    return x;
+  }
 
-    // First-difference of white noise = a bright, zero-mean transient.
-    let prevNoise = 0;
-    const click = (t, tau, gain) => {
-      const noise = rand() * 2 - 1;
-      const bright = noise - prevNoise;
-      prevNoise = noise;
-      return t < 0 ? 0 : bright * gain * Math.exp(-t / tau);
-    };
-
-    const attack = Math.max(1, Math.round(0.00025 * rate));   // 0.25 ms ramp: no step at t = 0
-    const fade = Math.round(0.004 * rate);                       // 4 ms raised-cosine tail
-
+  // Zero-start ramp, raised-cosine tail, then scale the peak to `level`.
+  function finish(data, rate, level) {
+    const n = data.length;
+    const attack = Math.max(1, Math.round(0.00025 * rate));
+    const fade = Math.round(0.004 * rate);
     let peak = 0;
     for (let i = 0; i < n; i++) {
-      const t = i / rate;
-      let v = click(t, recipe.clickTau, recipe.click);
-      for (const [w, tau, g] of ring) v += Math.sin(w * t) * Math.exp(-t / tau) * g;
-      for (const [w, tau, g] of body) v += Math.sin(w * t) * Math.exp(-t / tau) * g;
-      if (recipe.bottom && t >= bottomAt) {
-        const tb = t - bottomAt;
-        v += (rand() * 2 - 1) * recipe.bottom.gain * Math.exp(-tb / recipe.bottom.tau);
-        v += Math.sin(2 * Math.PI * 160 * tb) * 0.35 * recipe.bottom.gain * Math.exp(-tb / 0.01);
-      }
-      if (i < attack) v *= i / attack;
-      if (i >= n - fade) v *= 0.5 * (1 + Math.cos(Math.PI * (i - (n - fade)) / fade));
-      data[i] = v;
-      peak = Math.max(peak, Math.abs(v));
+      if (i < attack) data[i] *= i / attack;
+      if (i >= n - fade) data[i] *= 0.5 * (1 + Math.cos(Math.PI * (i - (n - fade)) / fade));
+      peak = Math.max(peak, Math.abs(data[i]));
     }
-    const scale = peak > 0 ? recipe.level * 0.5 / peak : 0;
+    const scale = peak > 0 ? level * 0.5 / peak : 0;
     for (let i = 0; i < n; i++) data[i] *= scale;
+  }
+
+  const jitter = (rand, v, amount) => v * (1 + (rand() * 2 - 1) * amount);
+
+  function renderKeyDown(r, seed) {
+    const rand = prng(seed);
+    const rate = ctx.sampleRate;
+    const n = Math.ceil(0.075 * rate);
+    const buffer = ctx.createBuffer(1, n, rate);
+    const data = buffer.getChannelData(0);
+    const at = r.bottomAt[0] + rand() * (r.bottomAt[1] - r.bottomAt[0]);
+
+    const layers = [
+      burst(n, rate, rand, 0, [5200, 0.9, 0.0004], 0.12),                                       // stem leaves the housing
+      burst(n, rate, rand, at, [jitter(rand, r.impact[0], 0.06), r.impact[1], r.impact[2]], 1),  // keycap hits bottom
+      burst(n, rate, rand, at, [jitter(rand, r.thock[0], 0.05), r.thock[1], r.thock[2]], r.thock[3]), // case cavity
+      ...r.rattle.map((dt) => burst(n, rate, rand, at + dt, [3200, 1.5, 0.0006], 0.22)),          // stabiliser wire
+    ];
+    const cases = r.cases.map(([f, tau, g]) => [2 * Math.PI * jitter(rand, f, 0.04), tau, g]);
+    for (let i = 0; i < n; i++) {
+      let v = 0;
+      for (const l of layers) v += l[i];
+      const tb = i / rate - at;
+      if (tb >= 0) for (const [w, tau, g] of cases) v += Math.sin(w * tb) * Math.exp(-tb / tau) * g;
+      data[i] = v;
+    }
+    finish(data, rate, jitter(rand, r.level, 0.08));
+    return buffer;
+  }
+
+  function renderKeyUp(r, seed) {
+    const rand = prng(seed);
+    const rate = ctx.sampleRate;
+    const n = Math.ceil(0.045 * rate);
+    const buffer = ctx.createBuffer(1, n, rate);
+    const data = buffer.getChannelData(0);
+    const slap = burst(n, rate, rand, 0, [jitter(rand, r.slap[0], 0.06), r.slap[1], r.slap[2]], 0.7);
+    const cases = r.cases.map(([f, tau, g]) => [2 * Math.PI * jitter(rand, f, 0.04), tau, g]);
+    for (let i = 0; i < n; i++) {
+      const t = i / rate;
+      let v = slap[i];
+      for (const [w, tau, g] of cases) v += Math.sin(w * t) * Math.exp(-t / tau) * g;
+      data[i] = v;
+    }
+    finish(data, rate, jitter(rand, r.level, 0.08));
+    return buffer;
+  }
+
+  // Early-Mac UI tick: square pulse plus a short body, through 22.25 kHz / 8-bit and a small-speaker low-pass.
+  function renderTick({ length, freq, tau, body, level }) {
+    const rate = ctx.sampleRate;
+    const n = Math.ceil(length * rate);
+    const buffer = ctx.createBuffer(1, n, rate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < n; i++) {
+      const t = i / rate;
+      let v = Math.sign(Math.sin(2 * Math.PI * freq * t)) * Math.exp(-t / tau) * 0.6;
+      if (body) v += Math.sin(2 * Math.PI * body[0] * t) * Math.exp(-t / body[1]) * 0.4;
+      data[i] = v;
+    }
+    // Sample-and-hold at the original Macintosh rate, quantised to 8 bits.
+    const hold = rate / 22254.5;
+    let held = 0;
+    for (let i = 0, next = 0; i < n; i++) {
+      if (i >= next) { held = Math.round(data[i] * 127) / 127; next += hold; }
+      data[i] = held;
+    }
+    // One-pole low-pass at ~5 kHz: the built-in speaker.
+    const a = Math.exp(-2 * Math.PI * 5000 / rate);
+    let y = 0;
+    for (let i = 0; i < n; i++) { y = (1 - a) * data[i] + a * y; data[i] = y; }
+    finish(data, rate, level);
     return buffer;
   }
 
@@ -108,16 +197,58 @@
     out = ctx.createGain();
     out.gain.value = 0.8;
     out.connect(ctx.destination);
-    bank = {};
+    bank = {
+      down: [renderTick({ length: 0.03, freq: 1050, tau: 0.0022, body: [520, 0.006], level: 0.7 })],
+      up: [renderTick({ length: 0.02, freq: 1600, tau: 0.0012, body: null, level: 0.4 })],
+    };
+    loadSamples();
     let seed = 1;
-    for (const [name, recipe] of Object.entries(RECIPES)) bank[name] = render(recipe, seed++ * 7919);
+    for (const kind of Object.keys(KEYS)) {
+      bank[`${kind}Down`] = Array.from({ length: VARIANTS }, () => renderKeyDown(KEYS[kind], seed++ * 7919));
+      bank[`${kind}Up`] = Array.from({ length: VARIANTS }, () => renderKeyUp(KEY_UP[kind], seed++ * 7919));
+    }
     return true;
+  }
+
+  async function loadSamples() {
+    try {
+      const decode = async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`${url}: ${res.status}`);
+        return ctx.decodeAudioData(await res.arrayBuffer());
+      };
+      const [down, up] = await Promise.all([decode(SAMPLE_URLS.down), decode(SAMPLE_URLS.up)]);
+      samples = { down, up };
+    } catch {
+      /* keep the synthesised keyboard */
+    }
+  }
+
+  function playKey(kind, phase) {
+    if (!enabled || !ensureAudio()) return;
+    if (!samples) { play(`${kind}${phase === 'down' ? 'Down' : 'Up'}`); return; }
+    const [centre, spread] = KEY_PITCH[kind];
+    const source = ctx.createBufferSource();
+    source.buffer = samples[phase];
+    source.playbackRate.value = centre * (1 + (Math.random() * 2 - 1) * spread);
+    const gain = ctx.createGain();
+    gain.gain.value = 10 ** (((Math.random() * 2 - 1) * 1.5) / 20);
+    source.connect(gain).connect(out);
+    source.onended = () => { source.disconnect(); gain.disconnect(); };
+    source.start();
   }
 
   function play(name) {
     if (!enabled || !ensureAudio()) return;
+    const set = bank[name];
+    let i = 0;
+    if (set.length > 1) {
+      i = Math.floor(Math.random() * (set.length - 1));
+      if (i >= (last[name] ?? -1)) i += 1;   // any render but the previous one
+      last[name] = i;
+    }
     const source = ctx.createBufferSource();
-    source.buffer = bank[name];
+    source.buffer = set[i];
     source.connect(out);
     source.onended = () => source.disconnect();
     source.start();
@@ -144,20 +275,21 @@
   addEventListener('pointerup', release, { capture: true, passive: true });
   addEventListener('pointercancel', () => { pressed = false; }, { capture: true, passive: true });
 
+  const keyKind = (code) => (code === 'Space' ? 'space' : BIG_KEYS.has(code) ? 'big' : 'alpha');
   addEventListener('keydown', (e) => {
-    if (e.repeat || e.isComposing || MODIFIERS.has(e.key)) return;
-    play('key');
+    if (e.repeat || e.isComposing) return;
+    playKey(keyKind(e.code), 'down');
   }, { capture: true });
   addEventListener('keyup', (e) => {
-    if (e.isComposing || MODIFIERS.has(e.key)) return;
-    play('keyup');
+    if (e.isComposing) return;
+    playKey(keyKind(e.code), 'up');
   }, { capture: true });
 
   // Title-bar toggle: <button data-sound-toggle aria-pressed="true|false">.
   function syncToggles() {
     for (const b of document.querySelectorAll('[data-sound-toggle]')) {
       b.setAttribute('aria-pressed', String(enabled));
-      b.title = enabled ? 'Turn click sounds off' : 'Turn click sounds on';
+      b.title = enabled ? 'Turn sounds off' : 'Turn sounds on';
     }
   }
   document.addEventListener('click', (e) => {

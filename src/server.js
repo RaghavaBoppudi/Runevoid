@@ -19,7 +19,7 @@ import { addManualJob } from './manual.js';
 import {
   esc, table, layout, counts, reviewPage, REVIEW_SCRIPT, draftView, emailView,
   overviewPage, sentPage, vendorsPage, logsPage, healthPage,
-  freshItems, scrapedPage,
+  freshItems, scrapedPage, APP_JS,
 } from './ui.js';
 
 // ── Search ───────────────────────────────────────────────────────────────────
@@ -116,6 +116,9 @@ export function startServer() {
   app.disable('x-powered-by');
   app.use(guard);
   app.use(express.json({ limit: '300kb' }));
+  // The page scripts, bundled in memory at startup (see APP_JS in src/ui.js). The URL carries the bundle's hash,
+  // so it can be cached for good.
+  app.get('/static/app.js', (_req, res) => res.type('text/javascript').set('Cache-Control', 'public, max-age=31536000, immutable').send(APP_JS));
   app.use('/static', express.static(join(ROOT, 'public'), { maxAge: '7d', index: false }));
   app.get('/favicon.ico', (_req, res) => res.sendFile(join(ROOT, 'public', 'favicon-32.png')));
 

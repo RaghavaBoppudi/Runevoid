@@ -1,4 +1,4 @@
-/* Runevoid dashboard theme: a 1-bit desktop window on a muddy-orange desk.
+/* Runevoid dashboard theme: a 1-bit desktop window on a night-sky desk (ligne claire palette).
  *
  * Pixel rules, so edges stay sharp at 1x and on Retina:
  *   - every border, offset, size and line height is a whole number of CSS pixels;
@@ -30,33 +30,34 @@
 /* ── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
   color-scheme: light;
-  --desk: #a55327;          /* the orange (#ff5b00 at H 21°) taken down to S 62% L 40% */
-  --desk-label: #f6f6f6;    /* desk icon names, off-white in both themes: 5.0:1 on this desk, 11:1 on the dark one */
-  --paper: #f6f6f6;
-  --paper-2: #e9e9e7;       /* hover, wells */
-  --paper-3: #dcdcd9;       /* pressed */
-  --ink: #1d1d1f;
-  --ink-2: #5f5f62;         /* secondary text, 6.2:1 on paper */
-  --ink-3: #8e8e91;         /* placeholders, disabled, 3.2:1 */
-  --rule: #c9c9c6;          /* separators inside a group */
+  --desk: #3f5779;          /* night sky from the ligne claire reference */
+  --paper: #e8e4cc;         /* snow cream */
+  --paper-2: #dcd7bc;       /* hover, wells */
+  --paper-3: #cec8aa;       /* pressed */
+  --ink: #1c1418;           /* line-art black, faintly warm */
+  --ink-2: #5a5048;         /* secondary text, 6.1:1 on paper */
+  --ink-3: #8a8170;         /* placeholders, disabled, 3.0:1 */
+  --rule: #bdb69c;          /* separators inside a group */
   --shade: var(--ink);      /* hard shadows are always the outline colour */
-  --accent: #ff5b00;
-  --accent-hover: #ff7326;
-  --on-accent: #1d1d1f;     /* 6.4:1 on the accent */
-  --accent-text: #b83d00;   /* orange text on paper, 5.1:1 */
-  --tint: #ffe2d1;
-  --bad: #c42b1c;
-  --on-bad: #fff;
+  --accent: #cf5722;        /* the car's muddy orange */
+  --accent-hover: #db6835;
+  --on-accent: #1c1418;     /* 4.3:1 on the accent */
+  --accent-text: #a3431a;   /* orange text on paper, 4.9:1 */
+  --tint: #eccdb0;
+  --bad: #a8261b;
+  --on-bad: #e8e4cc;
   --inv: var(--ink);        /* selected rows invert */
   --on-inv: var(--paper);
-  --on-inv-2: #b4b4b6;
+  --on-inv-2: #a59e8a;
 
   /* 2×2 dither: one ink pixel in four */
-  --dither: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%231d1d1f'/%3E%3C/svg%3E");
+  --dither: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%231c1418'/%3E%3C/svg%3E");
+  /* 2×2 checkerboard: two ink pixels in four, behind open dialogs */
+  --dither-dense: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%231c1418'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%231c1418'/%3E%3C/svg%3E");
 
   /* scrollbar arrows: 1-bit triangles in a 14px box */
-  --sb-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%231d1d1f'%3E%3Crect x='6' y='5' width='2' height='1'/%3E%3Crect x='5' y='6' width='4' height='1'/%3E%3Crect x='4' y='7' width='6' height='1'/%3E%3Crect x='3' y='8' width='8' height='1'/%3E%3C/svg%3E");
-  --sb-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%231d1d1f'%3E%3Crect x='3' y='5' width='8' height='1'/%3E%3Crect x='4' y='6' width='6' height='1'/%3E%3Crect x='5' y='7' width='4' height='1'/%3E%3Crect x='6' y='8' width='2' height='1'/%3E%3C/svg%3E");
+  --sb-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%231c1418'%3E%3Crect x='6' y='5' width='2' height='1'/%3E%3Crect x='5' y='6' width='4' height='1'/%3E%3Crect x='4' y='7' width='6' height='1'/%3E%3Crect x='3' y='8' width='8' height='1'/%3E%3C/svg%3E");
+  --sb-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%231c1418'%3E%3Crect x='3' y='5' width='8' height='1'/%3E%3Crect x='4' y='6' width='6' height='1'/%3E%3Crect x='5' y='7' width='4' height='1'/%3E%3Crect x='6' y='8' width='2' height='1'/%3E%3C/svg%3E");
 
   --font: Archivo, -apple-system, system-ui, "Helvetica Neue", sans-serif;
   --sidebar: 248px;
@@ -70,25 +71,26 @@
 /* Dark theme: chosen with the title-bar toggle, which sets <html data-theme="dark">. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --desk: #572f19;
-  --paper: #1d1d1f;
-  --paper-2: #2a2a2c;
-  --paper-3: #363639;
-  --ink: #f6f6f6;
-  --ink-2: #b0b0b3;
-  --ink-3: #7d7d81;
-  --rule: #3d3d40;
-  --accent: #ff6a14;
-  --accent-hover: #ff8340;
-  --on-accent: #1d1d1f;
-  --accent-text: #ff8a4c;
-  --tint: #4a2410;
-  --bad: #ff6b5e;
-  --on-bad: #1d1d1f;
-  --on-inv-2: #5f5f62;
-  --sb-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%23f6f6f6'%3E%3Crect x='6' y='5' width='2' height='1'/%3E%3Crect x='5' y='6' width='4' height='1'/%3E%3Crect x='4' y='7' width='6' height='1'/%3E%3Crect x='3' y='8' width='8' height='1'/%3E%3C/svg%3E");
-  --sb-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%23f6f6f6'%3E%3Crect x='3' y='5' width='8' height='1'/%3E%3Crect x='4' y='6' width='6' height='1'/%3E%3Crect x='5' y='7' width='4' height='1'/%3E%3Crect x='6' y='8' width='2' height='1'/%3E%3C/svg%3E");
-  --dither: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%23f6f6f6'/%3E%3C/svg%3E");
+  --desk: #26364d;
+  --paper: #201a1d;
+  --paper-2: #2c2528;
+  --paper-3: #383033;
+  --ink: #e8e4cc;
+  --ink-2: #b3ad97;
+  --ink-3: #807a69;
+  --rule: #433a3c;
+  --accent: #dd6430;
+  --accent-hover: #e67844;
+  --on-accent: #1c1418;
+  --accent-text: #e8875a;
+  --tint: #4a2616;
+  --bad: #ff7a6b;
+  --on-bad: #1c1418;
+  --on-inv-2: #5a5048;
+  --sb-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%23e8e4cc'%3E%3Crect x='6' y='5' width='2' height='1'/%3E%3Crect x='5' y='6' width='4' height='1'/%3E%3Crect x='4' y='7' width='6' height='1'/%3E%3Crect x='3' y='8' width='8' height='1'/%3E%3C/svg%3E");
+  --sb-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' shape-rendering='crispEdges' fill='%23e8e4cc'%3E%3Crect x='3' y='5' width='8' height='1'/%3E%3Crect x='4' y='6' width='6' height='1'/%3E%3Crect x='5' y='7' width='4' height='1'/%3E%3Crect x='6' y='8' width='2' height='1'/%3E%3C/svg%3E");
+  --dither: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%23e8e4cc'/%3E%3C/svg%3E");
+  --dither-dense: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%23e8e4cc'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%23e8e4cc'/%3E%3C/svg%3E");
 }
 
 /* ── Base ───────────────────────────────────────────────────────────────── */
@@ -102,7 +104,7 @@ body {
   /* right/bottom carry the window's 8px shadow so it is never clipped */
   padding: 28px 36px 36px 28px;
   overflow: hidden;
-  background: var(--desk);
+  background: var(--desk) var(--dither) 0 0 / 2px 2px repeat;   /* dithered desk, as in classic Mac OS */
   color: var(--ink);
   font: 500 13px/18px var(--font);
   font-synthesis: none;
@@ -133,20 +135,11 @@ h1, h2, h3, h4, p { margin: 0; }
   border: 0;
 }
 
-/* Icons: 16-unit grid, 2px square-ended strokes. */
-svg.i {
-  display: block;
-  flex: none;
-  width: 16px;
-  height: 16px;
-  overflow: visible;
-  fill: none;
-  stroke: currentcolor;
-  stroke-width: 2;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-}
-svg.i .f { fill: currentcolor; stroke: none; }
+/* Icons: 16×16 one-bit bitmaps (src/icons.js), shown at 16px or 32px only, so each bitmap pixel is whole device pixels.
+   .k is the ink; .o is the fill inside a shape, clear by default so the icon takes on whatever it sits on. */
+svg.i { display: block; flex: none; width: 16px; height: 16px; }
+svg.i .k { fill: currentcolor; }
+svg.i .o { fill: var(--icon-fill, none); }
 svg.i.x2 { width: 32px; height: 32px; }
 
 /* ── Scrollbars ──────────────────────────────────────────────────────────
@@ -200,34 +193,22 @@ svg.i.x2 { width: 32px; height: 32px; }
 .desk.left { left: 20px; }
 .desk.right { right: 20px; }
 @media (width >= 1340px) and (height >= 600px) { .desk { display: flex; } }
+/* Desktop icons as on the early Macintosh: a solid bitmap with its name on a paper strip under it;
+   the open pane's icon and a pressed icon are shown selected, inverted. */
 .dicon {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   padding: 2px 0;
-  border-radius: var(--radius);
   color: var(--ink);
   text-decoration: none;
+  --icon-fill: var(--paper);
 }
 .dicon:hover { text-decoration: none; }
-.dicon .tile {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  border: 2px solid var(--ink);
-  border-radius: 10px;
-  background: var(--paper);
-  box-shadow: var(--lift) var(--lift) 0 var(--shade);
-}
-.dicon svg.folder { display: block; width: 56px; height: 48px; }
-.dicon svg.folder .bg { fill: var(--paper); }
-.dicon svg.folder .sh { fill: var(--shade); stroke: var(--shade); stroke-width: 2; stroke-linejoin: miter; }
-.dicon svg.folder .ln { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: miter; }
-.dicon .name { color: var(--desk-label); font: 700 12px/16px var(--font); white-space: nowrap; }   /* plain text on the desk */
-.dicon:active .tile { background: var(--ink); color: var(--paper); }
-.dicon:active svg.folder .bg { fill: var(--ink); }
+.dicon .name { padding: 0 4px; background: var(--paper); color: var(--ink); font: 700 12px/16px var(--font); white-space: nowrap; }
+.dicon.on, .dicon:active { --icon-fill: var(--ink); color: var(--paper); }
+.dicon.on .name, .dicon:active .name { background: var(--ink); color: var(--paper); }
 
 /* ── Window ─────────────────────────────────────────────────────────────── */
 .window {
@@ -522,7 +503,17 @@ button:disabled { color: var(--ink-3); border-color: var(--ink-3); box-shadow: v
 button.primary:disabled { background: var(--paper-2); }
 button kbd { display: none; }
 button.scan svg.i { margin-left: -2px; }
-button.busy svg.i { animation: spin 1s steps(8) infinite; }
+
+/* Keys that sink when pressed: the press moves the key by its shadow offset, and browsers hit-test the moved box.
+   A press within --lift of the top or left edge would then release outside the key and the click would be lost.
+   While pressed, an invisible ::before also covers the key's resting position, so the release still lands on it. */
+button, .sb-profile, .chips a { position: relative; }
+:is(button, .sb-profile, .chips a):active::before {
+  content: "";
+  position: absolute;
+  inset: calc(-2px - var(--lift)) -2px -2px calc(-2px - var(--lift));   /* border box, extended up and left by the lift */
+}
+button.busy svg.i { animation: spin 1s steps(4) infinite; }   /* quarter turns keep the bitmap on the pixel grid */
 @keyframes spin { to { transform: rotate(360deg); } }
 .scan-msg { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
 .scan-msg.bad { color: var(--bad); }
@@ -543,7 +534,7 @@ button.busy svg.i { animation: spin 1s steps(8) infinite; }
   box-shadow: var(--lift) var(--lift) 0 var(--shade);
   appearance: none;
 }
-.sb-search input:focus, .filterbar input[type="search"]:focus { box-shadow: var(--lift) var(--lift) 0 var(--accent); }
+.sb-search input:focus, .filterbar input[type="search"]:focus { border-color: var(--accent); box-shadow: var(--lift) var(--lift) 0 var(--accent); }
 /* after the shared field rule so it wins */
 .sb-search input { padding-left: 32px; }
 input::placeholder, textarea::placeholder { color: var(--ink-3); opacity: 1; }
@@ -585,7 +576,8 @@ textarea {
   font: 500 13px/20px var(--font);
 }
 .grp.text { padding: 0 12px; }
-.grp.text:focus-within { box-shadow: var(--lift-lg) var(--lift-lg) 0 var(--accent); }
+.grp.text:focus-within { border-color: var(--accent); box-shadow: var(--lift-lg) var(--lift-lg) 0 var(--accent); }
+.grp.text textarea:focus-visible { box-shadow: none; }   /* the card shows focus; no second ring inside it */
 pre { margin: 0; padding: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 500 12px/18px var(--font); color: var(--ink); }
 
 /* Popup button: boxed select with a black arrow key, like a classic pop-up menu */
@@ -660,7 +652,8 @@ pre { margin: 0; padding: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere
 }
 .dlg::backdrop {
   /* ::backdrop may not inherit custom properties in every engine, hence the fallback */
-  background: var(--dither, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%231d1d1f'/%3E%3C/svg%3E")) 0 0 / 2px 2px repeat;
+  /* denser than the desk's dither, so an open dialog still reads as dimming everything behind it */
+  background: var(--dither-dense, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%231c1418'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%231c1418'/%3E%3C/svg%3E")) 0 0 / 2px 2px repeat;
 }
 .dlg form { margin: 0; }
 .dlg-body { display: flex; gap: 16px; padding: 22px 22px 20px; }
@@ -708,10 +701,10 @@ input[type="checkbox"]:not(.switch input) {
   appearance: none;
 }
 input[type="checkbox"]:not(.switch input):checked {
-  background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='%23f6f6f6' stroke-width='2' stroke-linecap='square'%3E%3Cpath d='M3 7l3 3 5-5'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+  background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='%23e8e4cc' stroke-width='2' stroke-linecap='square'%3E%3Cpath d='M3 7l3 3 5-5'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
 }
 [data-theme="dark"] input[type="checkbox"]:not(.switch input):checked {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='%231d1d1f' stroke-width='2' stroke-linecap='square'%3E%3Cpath d='M3 7l3 3 5-5'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='%231c1418' stroke-width='2' stroke-linecap='square'%3E%3Cpath d='M3 7l3 3 5-5'/%3E%3C/svg%3E");
 }
 
 /* Segmented control */
@@ -746,10 +739,11 @@ input[type="checkbox"]:not(.switch input):checked {
 .chips a {
   display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px;
   border: 2px solid var(--ink); border-radius: 6px; background: var(--paper);
-  box-shadow: 2px 2px 0 var(--shade); color: var(--ink); font: 600 12px/16px var(--font); white-space: nowrap;
+  --lift: 2px;
+  box-shadow: var(--lift) var(--lift) 0 var(--shade); color: var(--ink); font: 600 12px/16px var(--font); white-space: nowrap;
 }
 .chips a:hover { background: var(--paper-2); text-decoration: none; }
-.chips a:active { transform: translate(2px, 2px); box-shadow: none; }
+.chips a:active { transform: translate(var(--lift), var(--lift)); box-shadow: none; }
 .chips a.on { background: var(--inv); color: var(--on-inv); }
 .chips a b { font-weight: 500; color: var(--ink-2); }
 .chips a.on b { color: var(--on-inv-2); }
@@ -949,3 +943,45 @@ td a:hover { color: var(--accent-text); }
   .window, .grp, .hero, button, .item { border-color: CanvasText; }
   .sb-item::before, .sb-item::after { background: CanvasText; }
 }
+
+/* Duplicate JD on the Manual tab: loud, but every choice stays open. */
+.dupwarn {
+  margin: 0 0 16px;
+  padding: 16px 18px;
+  border: 3px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--tint);
+  box-shadow: var(--lift-lg) var(--lift-lg) 0 var(--shade);
+}
+.dupwarn[hidden] { display: none; }
+.dupwarn .dw-head {
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  color: var(--bad);
+  overflow-wrap: anywhere;
+}
+.dupwarn .dw-head::before { content: "⚠ "; }
+.dupwarn .dw-detail { margin-top: 6px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.dupwarn .dw-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+
+/* Anyone who asks the OS for more contrast gets a flat desk: the dither is texture, not information. */
+@media (prefers-contrast: more) {
+  body { background-image: none; }
+}
+
+/* Long lists (Sent, Log, Postings, Vendors): the browser skips layout and paint for rows outside the view,
+   using the row's last measured height (or 56px before it has one) to size the scroll range.
+   content-visibility clips each row to its box, so these rows reach the group's edges themselves (rather than
+   their hover fill hanging 12px outside them). */
+.grp.long > .row, .grp.long > details { content-visibility: auto; contain-intrinsic-size: auto 56px; margin-inline: -12px; padding-inline: 12px; }
+.grp.long > .row::after { inset: 0 !important; }
+.grp.long > .row + .row::before { left: 12px; right: 12px; }
+
+.row .val.end { text-align: right; }
+.row .bad { color: var(--bad); }
+.row .sp { flex: 1; }
+.row input.vt-date { flex: none; width: 112px; }
+.row input.vt-note { flex: none; width: 160px; }
+.meta.audit { padding: 3px 0; }

@@ -7,8 +7,8 @@
 //     Review / Manual: a list bar on the left (New postings → Needs fixing → Standard), the chosen draft in
 //     the work area, JD under the email, Approve/Skip pinned to the bottom. Keyboard: j/k ↑/↓ move,
 //     a approve, s skip, r re-match, x select, / filter.
-// Theme: a 1-bit desktop window on a muddy-orange desk (public/runevoid.css). Title bar, an outline sidebar,
-// boxed cards with hard shadows, keys that sink when pressed. Mechanical click sounds come from public/clicks.js.
+// Theme: a 1-bit desktop window on a night-sky desk (public/runevoid.css). Title bar, an outline sidebar,
+// boxed cards with hard shadows, keys that sink when pressed. Sounds (early-Mac UI ticks, mechanical-keyboard typing) come from public/clicks.js.
 // Review and Manual push a draft over the list.
 import { config, emailConfigured, dailyCap, ROOT } from './config.js';
 import { db, getState, DB_PATH } from './db.js';
@@ -19,6 +19,7 @@ import { isPriority, queueStatus, queuedInOrder } from './mailer.js';
 import { breakerState } from './pipeline.js';
 import { extractPhone } from './scraper.js';
 import { VENDOR_STATUSES, rematchStatus } from './actions.js';
+import { icon } from './icons.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -35,7 +36,9 @@ const assetUrl = (name) => {
   catch { /* file missing: serve the plain URL and let the static handler 404 */ }
   return `/static/${name}${v ? `?v=${v}` : ''}`;
 };
-const ASSETS = { css: assetUrl('runevoid.css'), clicks: assetUrl('clicks.js'), theme: assetUrl('theme.js'), scrollbars: assetUrl('scrollbars.js'), dialogs: assetUrl('dialogs.js'), menus: assetUrl('menus.js') };
+const ASSETS = { css: assetUrl('runevoid.css'),
+  favicon: assetUrl('favicon.svg'), favicon32: assetUrl('favicon-32.png'), touchIcon: assetUrl('apple-touch-icon.png'),
+  keyDown: assetUrl('sounds/key-down.wav'), keyUp: assetUrl('sounds/key-up.wav') };
 
 // ── Client script shared by every page ────────────────────────────────────────
 
@@ -107,7 +110,7 @@ function tick(){
     el.textContent = left > 0 ? fmtLeft(left) : 'sending…';
   }
 }
-setInterval(tick, 1000); tick();
+if (document.querySelector('[data-countdown]')) { setInterval(tick, 1000); tick(); }
 // KPI numbers count up on load.
 addEventListener('DOMContentLoaded', () => {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -118,7 +121,30 @@ addEventListener('DOMContentLoaded', () => {
     b.textContent = '0'; requestAnimationFrame(step);
   }
 });
+// Filter boxes: <input type="search" data-filter="#list > .row"> hides the rows that don't contain every word typed.
+// Row text is lowercased once and cached, and the work runs once per frame however fast you type.
+(() => {
+  const text = new WeakMap();
+  const textOf = (el) => { let t = text.get(el); if (t === undefined) { t = el.textContent.toLowerCase(); text.set(el, t) } return t };
+  let frame = 0;
+  document.addEventListener('input', (e) => {
+    const box = e.target instanceof Element ? e.target.closest('input[data-filter]') : null;
+    if (!box) return;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const words = box.value.toLowerCase().split(/\\s+/).filter(Boolean);
+      for (const row of document.querySelectorAll(box.dataset.filter)) row.hidden = !words.every((w) => textOf(row).includes(w));
+    });
+  });
+})();
 `;
+
+// Every page's browser code as one file, built once at startup: the scripts in public/ (order matters: dialogs and
+// menus before the shared client code that calls them), then CLIENT_JS. One cached request instead of six, and no
+// shared code inlined into each page.
+const BUNDLE_PARTS = ['theme.js', 'clicks.js', 'scrollbars.js', 'dialogs.js', 'menus.js'];
+export const APP_JS = BUNDLE_PARTS.map((f) => `// ── public/${f}\n${readFileSync(join(ROOT, 'public', f), 'utf8')}`).join(';\n') + `;\n// ── shared client code (src/ui.js)\n${CLIENT_JS}`;
+const APP_JS_URL = `/static/app.js?v=${createHash('sha256').update(APP_JS).digest('hex').slice(0, 10)}`;
 
 // Review / Manual: list + work area behaviour.
 const REVIEW_JS = `
@@ -366,34 +392,7 @@ function phoneRow(job) {
    <button type="button" class="small" onclick="navigator.clipboard.writeText('${esc(p)}');this.textContent='Copied';setTimeout(()=>this.textContent='Copy',1200)">Copy</button></div>`;
 }
 
-// Icons: 16-unit grid, 2px strokes centred on whole coordinates (see svg.i in runevoid.css). Shapes with
-// class "f" are filled instead of stroked. Shown only at 16px or 32px so every line lands on whole pixels.
-const ICON = {
-  overview: '<rect class="f" x="1" y="1" width="6" height="6"/><rect class="f" x="9" y="1" width="6" height="6"/><rect class="f" x="1" y="9" width="6" height="6"/><rect class="f" x="9" y="9" width="6" height="6"/>',
-  review: '<path d="M3 2h10v12H3z"/><path d="M5 8l2 2 4-4"/>',
-  manual: '<path d="M3 2h6l4 4v8H3z"/><path d="M8 7v4M6 9h4"/>',
-  sent: '<path d="M2 9v5h12V9"/><path d="M8 3v7M5 5l3-3 3 3"/>',
-  vendors: '<path d="M3 14V2h7v12M10 6h3v8M2 14h12"/><path d="M6 5h1M6 8h1M6 11h1"/>',
-  scraped: '<rect class="f" x="1" y="3" width="3" height="2"/><rect class="f" x="1" y="7" width="3" height="2"/><rect class="f" x="1" y="11" width="3" height="2"/><path d="M7 4h7M7 8h7M7 12h7"/>',
-  logs: '<circle cx="8" cy="8" r="6"/><path d="M8 5v3h2"/>',
-  health: '<rect class="f" x="1" y="9" width="3" height="5"/><rect class="f" x="6" y="5" width="3" height="9"/><rect class="f" x="11" y="1" width="3" height="13"/>',
-  search: '<circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/>',
-  send: '<path d="M2 8h10M9 4l4 4-4 4"/>',
-  eye: '<path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle class="f" cx="8" cy="8" r="2"/>',
-  refresh: '<path d="M13 8a5 5 0 1 1-5-5"/><path class="f" d="M8 0l3 3-3 3z"/>',
-  mail: '<path d="M2 3h12v10H2z"/><path d="M2 3l5 5h2l5-5"/>',
-  lock: '<path d="M3 7h10v7H3z"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
-  block: '<circle cx="8" cy="8" r="6"/><path d="M4 12l8-8"/>',
-  folder: '<path d="M2 3h5l2 2h5v9H2z"/><path d="M2 7h12"/>',
-  sun: '<circle cx="8" cy="8" r="3"/><path d="M8 1v1M8 14v1M1 8h1M14 8h1M3 3l1 1M12 12l1 1M13 3l-1 1M3 13l1-1"/>',
-  moon: '<path d="M10 2a6 6 0 1 0 4 10A5 5 0 0 1 10 2z"/>',
-  soundOn: '<path d="M2 6h3l3-3v10l-3-3H2z"/><path d="M11 6v4M14 4v8"/>',
-  soundOff: '<path d="M2 6h3l3-3v10l-3-3H2z"/><path d="M11 6l3 3M14 6l-3 3"/>',
-};
-const icon = (k, cls = '') => `<svg class="i${cls ? ` ${cls}` : ''}" viewBox="0 0 16 16" aria-hidden="true" focusable="false">${ICON[k] ?? ''}</svg>`;
-// Desk folder, drawn at 1x in a 56×48 box: the shadow is the same outline, filled and offset 3px.
-const FOLDER_PATH = 'M3 41V7h16l4 4h26v30z';
-const FOLDER = `<svg class="folder" viewBox="0 0 56 48" aria-hidden="true" focusable="false"><path class="sh" d="${FOLDER_PATH}" transform="translate(3 3)"/><path class="bg" d="${FOLDER_PATH}"/><path class="ln" d="${FOLDER_PATH}M3 15h46"/></svg>`;
+// Icons live in src/icons.js: 16×16 one-bit bitmaps in the early-Macintosh style.
 
 // Sidebar: an outline of folders, each with its panes underneath.
 const NAV = [
@@ -424,7 +423,7 @@ export function layout(active, body, { searchText = '', script = '', split = fal
    <nav class="sb-group" aria-label="${head}">${items.map(([href, k, label]) =>
     `<a class="sb-item${key === k ? ' on' : ''}" href="${href}"${key === k ? ' aria-current="page"' : ''}>${icon(k)}<span>${label}</span>${badge[k] ? `<b>${badge[k]}</b>` : ''}</a>`).join('')}</nav>`).join('\n   ');
   const desk = (side) => `<div class="desk ${side}" aria-hidden="true">${DESK[side].map(([href, k, label]) =>
-    `<a class="dicon${key === k ? ' on' : ''}" href="${href}" tabindex="-1">${side === 'left' ? `<span class="tile">${icon(k, 'x2')}</span>` : FOLDER}<span class="name">${label}</span></a>`).join('')}</div>`;
+    `<a class="dicon${key === k ? ' on' : ''}" href="${href}" tabindex="-1">${icon(side === 'left' ? k : 'folder', 'x2')}<span class="name">${label}</span></a>`).join('')}</div>`;
   const status = `${watcherPaused ? 'Watcher paused' : 'Watching nvoids'} · ${q.paused ? 'sending paused' : q.dryRun ? 'dry run' : 'sending on'}`;
   return `<!doctype html>
 <html lang="en">
@@ -436,9 +435,9 @@ export function layout(active, body, { searchText = '', script = '', split = fal
 <title>${TITLES[key] ? `${TITLES[key]} · ` : ''}Runevoid</title>
 <link rel="preload" href="/static/fonts/archivo-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="${ASSETS.css}">
-<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
-<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="${ASSETS.favicon}">
+<link rel="icon" type="image/png" sizes="32x32" href="${ASSETS.favicon32}">
+<link rel="apple-touch-icon" href="${ASSETS.touchIcon}">
 </head>
 <body data-next-at="${q.paused || q.dryRun ? 0 : (q.nextAt ?? 0)}" data-pending="${c.newPostings + c.waiting + c.fix}">
 ${desk('left')}
@@ -449,7 +448,7 @@ ${desk('right')}
   <h1>Runevoid</h1>
   <div class="wbar-tools">
    <button type="button" class="tool" data-theme-toggle aria-pressed="false" aria-label="Dark theme" title="Switch to dark theme"><span class="on">${icon('moon')}</span><span class="off">${icon('sun')}</span></button>
-   <button type="button" class="tool" data-sound-toggle aria-pressed="true" aria-label="Click sounds" title="Turn click sounds off"><span class="on">${icon('soundOn')}</span><span class="off">${icon('soundOff')}</span></button>
+   <button type="button" class="tool" data-sound-toggle aria-pressed="true" aria-label="Sounds" title="Turn sounds off"><span class="on">${icon('soundOn')}</span><span class="off">${icon('soundOff')}</span></button>
   </div>
  </header>
  <div class="wbody">
@@ -475,12 +474,8 @@ ${desk('right')}
   </main>
  </div>
 </div>
-<script src="${ASSETS.theme}"></script>
-<script src="${ASSETS.clicks}"></script>
-<script src="${ASSETS.scrollbars}"></script>
-<script src="${ASSETS.dialogs}"></script>
-<script src="${ASSETS.menus}"></script>
-<script>${CLIENT_JS}${script}</script>
+<script src="${APP_JS_URL}" data-key-down="${ASSETS.keyDown}" data-key-up="${ASSETS.keyUp}"></script>
+${script ? `<script>${script}</script>` : ''}
 </body>
 </html>`;
 }
@@ -544,25 +539,46 @@ function addJdForm() {
  <div class="row"><label for="m_title">Role</label><input type="text" id="m_title" placeholder="Read from the JD"></div>
  <div class="row"><label for="m_loc">Location</label><input type="text" id="m_loc" placeholder="Read from the JD"></div>
 </div>
+<div class="dupwarn" id="m_dup" role="alert" hidden><div class="dw-head"></div><div class="dw-detail"></div><div class="dw-btns"></div></div>
 <div class="btnrow" style="align-items:flex-start"><span class="msg meta" id="m_msg" style="flex:1;min-width:0;white-space:normal"></span><span class="sp"></span><button type="button" class="primary" onclick="addJd(this)">Create Draft</button></div>
 <p class="foot">Rules that would skip an nvoids posting (W2-only, low match) show as warnings instead, since you chose this job.</p>
 <script>
-async function addJd(b, replace){
-  const msg = document.getElementById('m_msg');
-  b.disabled = true; msg.textContent = 'Matching resumes…';
+async function addJd(b, mode, folder){
+  const msg = document.getElementById('m_msg'), dup = document.getElementById('m_dup');
+  const busy = [b, ...dup.querySelectorAll('button')];
+  busy.forEach(x => x.disabled = true); msg.textContent = 'Matching resumes…';
   const j = await post('/api/manual', { jd_text: document.getElementById('m_jd').value, to_email: document.getElementById('m_to').value,
-                                        title: document.getElementById('m_title').value, location: document.getElementById('m_loc').value, replace: !!replace });
-  b.disabled = false;
-  if (j.ok && !j.duplicate) { location.href = '/manual?open=' + j.app_id; return }
-  msg.innerHTML = '<span class="err"></span>'; msg.querySelector('.err').textContent = j.error || 'Failed';
-  // Same job already on file and not sent yet: offer to replace it (the earlier email is cancelled).
-  if (j.duplicate && j.replaceable) {
-    const r = document.createElement('button'); r.className = 'small'; r.textContent = 'Replace and Add';
-    r.title = 'Cancel #' + j.prior_id + ' and add this JD instead, matched against your current resumes';
-    r.onclick = async () => { if (await rvConfirm('Cancel #' + j.prior_id + ' and use this JD instead? It becomes a new draft for you to approve.', { ok: 'Replace' })) addJd(r, true) };
-    msg.append(' ', r);
+                                        title: document.getElementById('m_title').value, location: document.getElementById('m_loc').value,
+                                        replace: mode === 'replace', force: mode === 'force' || mode === 'send' });
+  busy.forEach(x => x.disabled = false);
+  if (j.ok && !j.duplicate) {
+    if (mode !== 'send') { location.href = '/manual?open=' + j.app_id; return }
+    msg.textContent = 'Queuing…';
+    const a = await post('/api/approve/' + j.app_id, folder ? { resume_folder: folder } : {});
+    if (a.ok) { location.href = '/sent'; return }
+    await rvAlert('Draft #' + j.id + ' was created but could not be queued: ' + (a.error || 'failed') + '. Opening it so you can fix it.');
+    location.href = '/manual?open=' + j.app_id; return;
   }
+  dup.hidden = true; msg.textContent = '';
+  if (!j.duplicate) { msg.innerHTML = '<span class="err"></span>'; msg.querySelector('.err').textContent = j.error || 'Failed'; return }
+  // Duplicate: a loud warning, but every option stays open. You decide.
+  dup.querySelector('.dw-head').textContent = j.headline;
+  dup.querySelector('.dw-detail').textContent = j.error;
+  const btns = dup.querySelector('.dw-btns'); btns.replaceChildren();
+  const mk = (label, cls, title, fn) => { const x = document.createElement('button'); x.type = 'button'; x.className = cls; x.textContent = label; x.title = title; x.onclick = fn; btns.append(x); return x };
+  mk('Create Draft Anyway', '', 'Add this JD as a new follow-up draft (#' + j.prior_id + ' is kept). You review it before it goes out.', () => addJd(b, 'force'));
+  mk('Send Anyway', 'primary', 'Add it and queue the email now, without opening the draft', async (e) => {
+    if (await rvConfirm('Email this recruiter again for #' + j.prior_id + ' “' + j.prior_title + '”' + (j.sent_at ? ' (last sent ' + j.sent_at + ')' : '') + '? It is queued right away.', { ok: 'Send' })) addJd(b, 'send');
+  });
+  if (j.prior_resume) mk('Send Same Resume (' + j.prior_resume + ')', '', 'Queue it now with exactly the resume they already got from you', async () => {
+    if (await rvConfirm('Email this recruiter again with the same resume (' + j.prior_resume + ') they got' + (j.sent_at ? ' on ' + j.sent_at : '') + '? It is queued right away.', { ok: 'Send' })) addJd(b, 'send', j.prior_resume);
+  });
+  if (j.replaceable) mk('Replace and Add', '', 'Cancel #' + j.prior_id + ' and add this JD instead, matched against your current resumes', async () => {
+    if (await rvConfirm('Cancel #' + j.prior_id + ' and use this JD instead? It becomes a new draft for you to approve.', { ok: 'Replace' })) addJd(b, 'replace');
+  });
+  dup.hidden = false; dup.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
+document.getElementById('m_jd').addEventListener('input', () => { document.getElementById('m_dup').hidden = true });
 </script>`;
 }
 
@@ -589,7 +605,7 @@ export function draftView(app, job) {
   const holdButtons = {
     same_day: [['tomorrow', 'Send Tomorrow'], ['use_today', `Use Same Resume`], ['send_anyway_today', 'Send Anyway']],
     lock_edited: [['use_lock', 'Switch to Locked Resume']], lock_missing: [['retry', 'Retry']], job_details: [['to_draft', 'Edit the Email']],
-    lock_low_fit: [['retry', 'Retry']], repost: [['send_anyway', 'Send Anyway']], weekly_cap: [['next_week', 'Send Next Week']],
+    lock_low_fit: [['retry', 'Retry']], repost: app.todays_folder ? [['send_same_resume', `Send Same Resume (${app.todays_folder})`], ['send_anyway', `Send Anyway (${app.resume_folder})`]] : [['send_anyway', 'Send Anyway']], weekly_cap: [['next_week', 'Send Next Week']],
     dry_run: [['retry', 'Queue Again']], blacklist: [], same_jd_edited: [['to_draft', 'Back to Draft']],
   }[app.hold_kind] ?? [['retry', 'Retry']];
   const dis = held ? 'disabled' : '';
@@ -744,15 +760,18 @@ async function saveQueued(b){
 // ── Sent history ──────────────────────────────────────────────────────────────
 
 export function sentPage() {
-  const rows = db.prepare(`SELECT a.*, j.title, j.url, j.recruiter_name, j.company, j.source FROM applications a JOIN jobs j ON j.id = a.job_id
+  // Only the columns the list shows: a.* dragged every email body and ranking through the sort.
+  const rows = db.prepare(`SELECT a.id, a.to_email, a.resume_folder, a.match_score, a.locked, a.error, a.status, a.sent_at, a.updated_at,
+                                  j.title, j.recruiter_name
+                           FROM applications a JOIN jobs j ON j.id = a.job_id
                            WHERE a.status IN ('sent','failed','skipped','sending','expired') ORDER BY COALESCE(a.sent_at, a.updated_at) DESC LIMIT 2000`).all();
   const cap = (x) => x ? x[0].toUpperCase() + x.slice(1) : '';
   return `${hero('sent', 'Sent', 'Every email that went out, failed, expired or was skipped.')}
-<div class="filterbar"><input type="search" placeholder="Filter ${rows.length} emails" aria-label="Filter ${rows.length} emails" oninput="for(const r of document.querySelectorAll('#st .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
+<div class="filterbar"><input type="search" placeholder="Filter ${rows.length} emails" aria-label="Filter ${rows.length} emails" data-filter="#st > .row">
  <span class="sp"></span><a class="quiet" href="/history">Sent_History.md</a><a class="quiet" href="/export/applications.csv">Export CSV</a></div>
-<div class="grp" id="st">${rows.map(r => `<a class="row tall" href="/app/${r.id}"><span class="lbl"><span>${esc(r.title ?? '')}</span>
-  <span class="sub one">${esc(r.recruiter_name ? `${r.recruiter_name} · ` : '')}${esc(r.to_email)} · ${esc(resumeLabel(r.resume_folder))} ${r.match_score ?? '?'}%${r.locked ? ' · locked' : ''}</span>${r.error ? `<span class="sub" style="color:var(--bad)">${esc(r.error)}</span>` : ''}</span>
-  <span class="val" style="text-align:right">${r.status === 'failed' ? `<span style="color:var(--bad)">${cap(r.status)}</span>` : cap(r.status)}<span class="sub">${esc(String(r.sent_at ?? r.updated_at ?? '').slice(0, 16))}</span></span><span class="chev"></span></a>`).join('') || '<div class="empty-row">Nothing has been sent yet.</div>'}</div>`;
+<div class="grp long" id="st">${rows.map(r => `<a class="row tall" href="/app/${r.id}"><span class="lbl"><span>${esc(r.title ?? '')}</span>
+  <span class="sub one">${esc(r.recruiter_name ? `${r.recruiter_name} · ` : '')}${esc(r.to_email)} · ${esc(resumeLabel(r.resume_folder))} ${r.match_score ?? '?'}%${r.locked ? ' · locked' : ''}</span>${r.error ? `<span class="sub bad">${esc(r.error)}</span>` : ''}</span>
+  <span class="val end">${r.status === 'failed' ? `<span class="bad">${cap(r.status)}</span>` : cap(r.status)}<span class="sub">${esc(String(r.sent_at ?? r.updated_at ?? '').slice(0, 16))}</span></span><span class="chev"></span></a>`).join('') || '<div class="empty-row">Nothing has been sent yet.</div>'}</div>`;
 }
 
 // ── Vendors & locks ───────────────────────────────────────────────────────────
@@ -776,16 +795,18 @@ export function vendorsPage() {
   const tally = Object.entries(VENDOR_STATUSES).map(([k, v]) => [v, withStatus.filter(s => s.status === k).length]).filter(([, c]) => c);
   return `${hero('vendors', 'Vendors', 'Recruiters you have emailed, where things stand with each one, and which resume they always get.')}
 <div class="section">Recruiters <span class="aside">${tally.length ? tally.map(([v, c]) => `${v} ${c}`).join(' · ') : `${vendors.length} emailed`}</span></div>
-${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder="Filter recruiters" aria-label="Filter recruiters" oninput="for(const r of document.querySelectorAll('#vt>details'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'"></div>` : ''}
-<div class="grp" id="vt">${vendors.map(v => { const s = statuses.get(v.addr); const l = lockOf(v.addr);
-  return `<details class="disc"><summary class="row tall"><span class="lbl"><span>${esc(v.addr)}</span><span class="sub one">${v.sends} sent${v.last_sent ? ` · last ${esc(v.last_sent.slice(0, 10))}` : ''} · ${weekly.get(v.addr) ?? 0} this week${l ? ` · locked to ${esc(resumeLabel(l.resume_folder))}` : ''}</span></span>
-   ${s ? `<span class="pill ${s.status}">${esc(VENDOR_STATUSES[s.status])}</span>` : ''}<span class="chev"></span></summary>
-   <div class="disc-body">
-    <div class="row" data-addr="${esc(v.addr)}"><label>Status</label><span style="flex:1"></span><span class="popup"><select>${opts(s?.status)}</select></span>
-     <input type="text" value="${esc(s?.on_date ?? '')}" placeholder="YYYY-MM-DD" inputmode="numeric" maxlength="10" autocomplete="off" aria-label="Date" style="flex:none;width:112px"><input type="text" placeholder="Note" value="${esc(s?.note ?? '')}" style="flex:none;width:160px"><button type="button" class="small" onclick="vsave(this)">Save</button></div>
-    ${l ? '' : `<div class="row"><span class="lbl"><span>Resume lock</span><span class="sub">Always send this recruiter the same resume.</span></span><button type="button" class="small" onclick="lockPrefill('${esc(parseVendor(v.addr)?.domain ?? '')}')">Lock…</button></div>`}
-    <div class="row"><span class="lbl"><span>Block</span><span class="sub">Never email this address again. Its postings and unsent emails are skipped.</span></span><button type="button" class="small danger" onclick="blockAddr('${esc(v.addr)}',this)">Block…</button></div>
-   </div></details>`; }).join('') || '<div class="empty-row">No recruiters yet. They appear after your first send.</div>'}</div>
+${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder="Filter recruiters" aria-label="Filter recruiters" data-filter="#vt > details"></div>` : ''}
+<div class="grp long" id="vt">${vendors.map(v => { const s = statuses.get(v.addr); const l = lockOf(v.addr);
+  // The editor for a row is built from #vt-body only when the row is opened (see VENDOR_JS): a thousand hidden
+  // copies of it were most of this page's weight.
+  return `<details class="disc" data-addr="${esc(v.addr)}" data-status="${esc(s?.status ?? '')}" data-date="${esc(s?.on_date ?? '')}" data-note="${esc(s?.note ?? '')}"${l ? ' data-locked' : ` data-domain="${esc(parseVendor(v.addr)?.domain ?? '')}"`}><summary class="row tall"><span class="lbl"><span>${esc(v.addr)}</span><span class="sub one">${v.sends} sent${v.last_sent ? ` · last ${esc(v.last_sent.slice(0, 10))}` : ''} · ${weekly.get(v.addr) ?? 0} this week${l ? ` · locked to ${esc(resumeLabel(l.resume_folder))}` : ''}</span></span>
+   ${s ? `<span class="pill ${s.status}">${esc(VENDOR_STATUSES[s.status])}</span>` : ''}<span class="chev"></span></summary></details>`; }).join('') || '<div class="empty-row">No recruiters yet. They appear after your first send.</div>'}</div>
+<template id="vt-body"><div class="disc-body">
+ <div class="row"><label>Status</label><span class="sp"></span><span class="popup"><select>${opts('')}</select></span>
+  <input type="text" class="vt-date" placeholder="YYYY-MM-DD" inputmode="numeric" maxlength="10" autocomplete="off" aria-label="Date"><input type="text" class="vt-note" placeholder="Note" aria-label="Note"><button type="button" class="small" data-act="save">Save</button></div>
+ <div class="row" data-unlocked><span class="lbl"><span>Resume lock</span><span class="sub">Always send this recruiter the same resume.</span></span><button type="button" class="small" data-act="lock">Lock…</button></div>
+ <div class="row"><span class="lbl"><span>Block</span><span class="sub">Never email this address again. Its postings and unsent emails are skipped.</span></span><button type="button" class="small danger" data-act="block">Block…</button></div>
+</div></template>
 <div class="section">Resume locks <span class="aside">${locks.length}</span></div>
 <div class="grp">
  ${locks.map(l => `<div class="row"><span class="ico">${icon('lock')}</span><span class="lbl"><span>${esc(lockLabel(l))}</span><span class="sub one">${esc(resumeLabel(l.resume_folder))}${l.reason ? ` · ${esc(l.reason)}` : ''}</span></span><button type="button" class="small" onclick="simple('/api/locks/${l.id}/delete',{},this,'Remove this lock?')">Remove</button></div>`).join('')}
@@ -804,7 +825,7 @@ ${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder=
 </div>
 <p class="foot">An address blocks that one person; a domain (acme.com) blocks everyone there. Blocked recruiters are never emailed or CC'd, by any route: their postings, drafts and queued emails are skipped, and the final send refuses them.</p>
 <div class="grp" style="margin-top:20px"><details class="disc"><summary class="row"><span class="lbl"><span>Change history</span></span><span class="val">${audit.length}</span><span class="chev"></span></summary><div class="disc-body">
- ${audit.map(r => `<div class="meta" style="padding:3px 0">${esc(r.ts)} · ${esc(r.action)} · ${esc(String(r.detail).slice(0, 140))}</div>`).join('') || '<p class="meta">None.</p>'}</div></details></div>
+ ${audit.map(r => `<div class="meta audit">${esc(r.ts)} · ${esc(r.action)} · ${esc(String(r.detail).slice(0, 140))}</div>`).join('') || '<p class="meta">None.</p>'}</div></details></div>
 <script>
 async function blockAddr(addr, b){ if (!(await rvConfirm('Block ' + addr + '? Runevoid will never send them anything, and their unsent emails are skipped.', { ok: 'Block' }))) return;
   b.disabled = true; const j = await post('/api/blacklist', { term: addr }); if (j.ok) location.reload(); else { b.disabled = false; rvAlert(j.error) } }
@@ -813,8 +834,28 @@ async function bladd(b){ const t = document.getElementById('bl-term').value; if 
 async function blrm(id, a){ if (!(await rvConfirm('Unblock this recruiter?', { ok: 'Unblock' }))) return; const j = await post('/api/blacklist/' + id + '/delete'); if (j.ok) location.reload(); else rvAlert(j.error) }
 function lockFields(){ const o = {}; document.querySelectorAll('#lockform [name]').forEach(e => o[e.name] = e.value); return o }
 function lockPrefill(d){ const f = document.getElementById('lock-fold'); if (f) f.open = true; document.querySelector('#lockform [name=domain]').value = d; document.querySelector('#lockform [name=domain]').focus() }
+// Recruiter rows: build the editor on first open, and handle its buttons by delegation.
+const vt = document.getElementById('vt'), vtBody = document.getElementById('vt-body');
+if (vt) {
+  vt.addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (!d.open || d.querySelector('.disc-body')) return;
+    const body = vtBody.content.firstElementChild.cloneNode(true);
+    const [sel, date, note] = body.querySelectorAll('select, input');
+    sel.value = d.dataset.status; date.value = d.dataset.date; note.value = d.dataset.note;
+    if ('locked' in d.dataset) body.querySelector('[data-unlocked]').remove();
+    d.append(body);
+  }, true);   // toggle doesn't bubble; capture sees it on the way down
+  vt.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const d = b.closest('details');
+    if (b.dataset.act === 'save') vsave(b);
+    else if (b.dataset.act === 'lock') lockPrefill(d.dataset.domain);
+    else if (b.dataset.act === 'block') blockAddr(d.dataset.addr, b);
+  });
+}
 async function vsave(b){
-  const box = b.closest('[data-addr]'); const [sel, date, note] = box.querySelectorAll('select,input');
+  const box = b.closest('details'); const [sel, date, note] = box.querySelectorAll('.disc-body select, .disc-body input');
   const d = date.value.trim();
   const t = new Date(d + 'T00:00:00Z');   // invalid dates (2026-13-45) give NaN, and toISOString() would throw
   const valid = /^\\d{4}-\\d{2}-\\d{2}$/.test(d) && !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === d;
@@ -830,9 +871,9 @@ async function vsave(b){
 export function logsPage(view) {
   if (view === 'scraped') return scrapedPage({ show: '', day: 'all' });
   const rows = db.prepare(`SELECT * FROM events ORDER BY id DESC LIMIT 1500`).all();
-  return `<div class="filterbar"><input type="search" placeholder="Filter the log" aria-label="Filter the log" oninput="for(const r of document.querySelectorAll('#lg .row'))r.style.display=r.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none'">
+  return `<div class="filterbar"><input type="search" placeholder="Filter the log" aria-label="Filter the log" data-filter="#lg > .row">
  <span class="sp"></span><a class="quiet" href="/export/events.csv">Export Log</a><a class="quiet" href="/export/jobs.csv">Export Postings</a></div>
-<div class="grp" id="lg">${rows.map(r => `<div class="row">${r.level === 'error' ? '<span class="dot"></span>' : r.level === 'warn' ? '<span class="dot ring"></span>' : '<span class="dot grey"></span>'}
+<div class="grp long" id="lg">${rows.map(r => `<div class="row">${r.level === 'error' ? '<span class="dot"></span>' : r.level === 'warn' ? '<span class="dot ring"></span>' : '<span class="dot grey"></span>'}
   <span class="lbl wrap"><span>${esc(r.message)}</span><span class="sub one">${esc(r.ts)} · ${esc(r.type)}${r.job_id ? ` · #${r.job_id}` : ''}</span></span></div>`).join('') || '<div class="empty-row">Nothing logged yet.</div>'}</div>`;
 }
 
@@ -847,20 +888,31 @@ const SCRAPE_GROUPS = {
   error:    ['Errors', `status IN ('error','no_resume')`],
   waiting:  ['Not read yet', `status = 'new'`],
 };
+// The statuses in each group, for counting in JS (SCRAPE_GROUPS holds the same sets as SQL for the list query).
+const SCRAPE_STATUSES = {
+  drafted: ['pending_approval', 'queued', 'sent', 'held', 'sending', 'failed', 'expired', 'approved'],
+  filtered: ['filtered_out'], low: ['low_match'], noemail: ['no_email'], skipped: ['skipped'], error: ['error', 'no_resume'], waiting: ['new'],
+};
 export function scrapedPage({ show = '', day = 'today', q = '' } = {}) {
   const dayWhere = day === 'all' ? '1' : day === 'hour' ? `scraped_at >= datetime('now','localtime','-1 hour')` : `scraped_at >= date('now','localtime')`;
   const base = `source IS NOT 'manual' AND ${dayWhere}`;
   const manualBase = `source = 'manual' AND ${dayWhere}`;   // JDs you pasted on the Manual tab (#1001+)
-  const manualCount = n(`SELECT COUNT(*) n FROM jobs WHERE ${manualBase}`);
-  const tally = Object.entries(SCRAPE_GROUPS).map(([k, [label, w]]) => [k, label, n(`SELECT COUNT(*) n FROM jobs WHERE ${base} AND ${w}`)]);
-  const total = n(`SELECT COUNT(*) n FROM jobs WHERE ${base}`);
+  // One pass over the day's postings for every tab count (eight separate COUNTs took ~50 ms each).
+  const byStatus = db.prepare(`SELECT source = 'manual' manual, status, COUNT(*) n FROM jobs WHERE ${dayWhere} GROUP BY 1, 2`).all();
+  const manualCount = byStatus.filter(r => r.manual).reduce((a, r) => a + r.n, 0);
+  const total = byStatus.filter(r => !r.manual).reduce((a, r) => a + r.n, 0);
+  const tally = Object.entries(SCRAPE_GROUPS).map(([k, [label]]) =>
+    [k, label, byStatus.filter(r => !r.manual && SCRAPE_STATUSES[k].includes(r.status)).reduce((a, r) => a + r.n, 0)]);
   const terms = String(q).toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
   const like = (t) => `%${t.replace(/[\\%_]/g, '\\$&')}%`;
   const where = [show === 'manual' ? manualBase : base, SCRAPE_GROUPS[show]?.[1] ?? '1',
     ...terms.map(() => `lower(coalesce(title,'') || ' ' || coalesce(company,'') || ' ' || coalesce(recruiter_email,'') || ' ' || coalesce(recruiter_name,'') || ' ' || coalesce(location_jd, location_listed, '') || ' ' || coalesce(status_reason,'') || ' ' || id) LIKE ? ESCAPE '\\'`)].join(' AND ');
+  // Only the columns the list shows; the job description text is most of each row's size.
   const rows = db.prepare(`SELECT j.*, a.id app_id, a.status app_status, a.resume_folder,
                                   a.match_score app_match_score, a.ranking_json app_ranking_json
-                           FROM (SELECT * FROM jobs WHERE ${where} ORDER BY id DESC LIMIT 1000) j LEFT JOIN applications a ON a.job_id = j.id
+                           FROM (SELECT id, source, url, title, company, posted_raw, location_jd, location_listed, recruiter_email,
+                                        status, status_reason, match_score, ranking_json
+                                 FROM jobs WHERE ${where} ORDER BY id DESC LIMIT 1000) j LEFT JOIN applications a ON a.job_id = j.id
                            ORDER BY j.id DESC`).all(...terms.map(like));
   const matchInfo = (r) => {
     const ranking = JSON.parse(r.app_ranking_json ?? r.ranking_json ?? '[]');
@@ -896,7 +948,7 @@ async function applyAnyway(id, button) {
   <form method="get" action="/scraped" style="margin:0"><input type="hidden" name="show" value="${esc(show)}"><input type="hidden" name="day" value="${esc(day)}"><input type="search" name="q" value="${esc(q)}" placeholder="Filter postings" aria-label="Filter postings"><button type="submit" class="sr-only">Filter</button></form>
   <a class="quiet" href="/export/jobs.csv">Export CSV</a></div>
  <div class="filterbar"><div class="chips" role="group" aria-label="Show">${chip(!show, url({ show: '' }), `All <b>${total}</b>`)}${tally.map(([k, label, c]) => chip(show === k, url({ show: k }), `${label} <b>${c}</b>`)).join('')}${chip(show === 'manual', url({ show: 'manual' }), `Manual <b>${manualCount}</b>`)}</div></div>
- <div class="grp">${rows.map(r => {
+ <div class="grp long">${rows.map(r => {
     const info = matchInfo(r);
     const missing = r.status !== 'low_match' || !info.missing.length ? '' : `<span class="sub one">Missing: ${info.missing.slice(0, 12).map(esc).join(', ')}${info.missing.length > 12 ? '…' : ''}</span>`;
     const action = `${open(r)}${r.status === 'low_match' ? ` <button type="button" class="small" onclick="applyAnyway(${r.id},this)" title="Draft it with your best resume, whatever the match. It still waits in Review for your approval.">Apply Anyway</button>` : ''}`;

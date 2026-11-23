@@ -84,18 +84,21 @@ function sentTo(address) {
                      WHERE a.status = 'sent' AND lower(a.to_email) = ? ORDER BY a.sent_at DESC`).all(address);
 }
 
+const fileOf = (s) => s.resume_path ? ` (${String(s.resume_path).split(/[\\/]/).pop()})` : '';
+
+// Returns { reason, folder } — folder is the resume that recruiter already got, so you can resend the same one.
 export function findRepost(app, job) {
   const v = parseVendor(app.to_email); if (!v) return null;
   const nt = normTitle(job.title);
   for (const s of sentTo(v.address)) {
     if (s.job_id === job.id) continue;
     if (nt && normTitle(s.title) === nt && s.sent_at >= daysAgo(config.duplicateWindowDays)) {
-      return `${v.address} already got “${s.title}” on ${s.sent_at} (same job title within ${config.duplicateWindowDays} days)`;
+      return { folder: s.resume_folder, reason: `${v.address} already got “${s.title}” on ${s.sent_at} with resume folder ${s.resume_folder}${fileOf(s)} (same job title within ${config.duplicateWindowDays} days)` };
     }
     if (s.sent_at >= hoursAgo(config.repostCooldownHours)) {
       const sim = similarity(job.jd_text, s.jd_text);
       if (sim >= config.repostSimilarity) {
-        return `${v.address} got a ${Math.round(sim * 100)}% identical job description on ${s.sent_at} (“${s.title}”) — likely the same job reposted`;
+        return { folder: s.resume_folder, reason: `${v.address} got a ${Math.round(sim * 100)}% identical job description on ${s.sent_at} (“${s.title}”) with resume folder ${s.resume_folder}${fileOf(s)} — likely the same job reposted` };
       }
     }
   }
@@ -182,7 +185,7 @@ export function draftWarnings(app, job) {
   const lock = lockFor(app.to_email);
   if (lock) w.push(`Vendor LOCKED to resume folder ${lock.resume_folder} (${lockLabel(lock)}${lock.reason ? `: ${lock.reason}` : ''})`);
   const rp = findRepost(app, job);
-  if (rp) w.push(`Repost: ${rp}. It will be held at send time.`);
+  if (rp) w.push(`Repost: ${rp.reason}. It will be held at send time${rp.folder && rp.folder !== app.resume_folder ? `; this draft uses ${app.resume_folder}, so pick ${rp.folder} in the Resume menu to resend the same one` : rp.folder ? ' (this draft already uses the same resume)' : ''}.`);
   const tf = todaysFolder(app.to_email);
   if (tf && tf !== app.resume_folder && !app.override_same_day) w.push(`This vendor already got your ${tf} resume today. It will be held so you can choose: Send Anyway, use the same resume, or send tomorrow`);
   const wk = weeklyCount(app.to_email);
@@ -224,7 +227,7 @@ export function resolveForSend(app, job) {
 
   if (!app.override_repost) {
     const rp = findRepost(app, job);
-    if (rp) return { action: 'hold', kind: 'repost', reason: rp };
+    if (rp) return { action: 'hold', kind: 'repost', reason: rp.reason, todays_folder: rp.folder && rp.folder !== folder ? rp.folder : null };
   }
 
   // Same JD, same vendor company, new recruiter: send the resume that company already has for this job.

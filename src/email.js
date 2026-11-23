@@ -169,8 +169,15 @@ const FAMILY_TITLE = { ai: 'AI/ML Engineer', ds: 'Data Scientist', java: 'Java D
 //   3. the cleaned headline, if it names a role (never a greeting)
 //   4. the first short line near the top of the JD that names a role
 //   5. the cleaned headline if it is at least not a greeting, else a neutral name for the job's family
+// "We're #Hiring: Lead AI Engineer" / "#Hiring – Lead AI Engineer" / "Now hiring for AI Engineer" → "Lead AI Engineer".
+const HIRING_PREFIX = /^\W*(?:(?:we\s*(?:'|’)?\s*re|we\s+are|now|currently)\s+#?hiring|#hiring|hiring)\b\s*(?:for\s+(?:an?\s+)?)?[:!\-–—|]*\s*/i;
+export const stripHiring = (s) => { const t = String(s ?? '').trim(); const r = t.replace(HIRING_PREFIX, ''); return r && r !== t && NAMES_ROLE(r) ? r : t };
+// A JD field label, never a role: "Location: Houston, TX", "Hire Type: Contract", "Overall Exp: 9 years".
+export const FIELD_LABEL = /^\W*(?:job\s+)?(?:location|work\s+location|hire\s+type|job\s+type|employment\s+type|type|duration|rate|pay\s*rate|salary|overall\s+exp(?:erience)?|exp(?:erience)?|visa|work\s+authori[sz]ation|client|end\s+client|start\s+date|mode|work\s+mode)\s*[:\-–]/i;
+
 export function roleTitle(job) {
-  const jd = (job.jd_text ?? '').slice(0, 2500);
+  job = { ...job, title: stripHiring(job.title) };
+  const jd = (job.jd_text ?? '').slice(0, 2500).split('\n').map(stripHiring).join('\n');
   const labelled = /^\s*(?:job\s*title|position(?:\s*(?:title|name))?|role(?:\s*(?:name|title))?|title|requirement)\s*[:\-–]+\s*(.{3,80})$/im.exec(jd)?.[1];
   if (labelled && NAMES_ROLE(labelled) && !isGreeting(labelled)) return cleanTitle(labelled.trim());
   const lines = jd.split('\n').map(l => l.trim());
@@ -186,7 +193,7 @@ export function roleTitle(job) {
   const roleLine = lines.slice(0, 30).find(l => l.length >= 4 && l.length <= 80 && l.split(/\s+/).length <= 10 && NAMES_ROLE(l)
     && !isGreeting(l) && !/@|https?:|[:.?]$/.test(l) && !/\b(?:experience|years|required|responsib|looking|seeking|hiring for)\b/i.test(l));
   if (roleLine) return cleanTitle(roleLine);
-  if (!isGreeting(job.title) && !isGreeting(head) && head.length >= 3) return head;
+  if (!isGreeting(job.title) && !isGreeting(head) && !FIELD_LABEL.test(job.title ?? '') && head.length >= 3) return head;
   return FAMILY_TITLE[familyForTitle(`${job.title ?? ''} ${jd.slice(0, 400)}`)] ?? 'AI/ML Engineer';
 }
 

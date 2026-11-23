@@ -159,7 +159,7 @@ export function skip(id) {
 export function resolveHold(id, decision, folder) {
   let app = mustGet(id);
   if (app.status !== 'held') throw new Error(`It is ${app.status}, not held`);
-  if (folder && folder !== app.resume_folder && !['use_today', 'use_lock'].includes(decision)) {
+  if (folder && folder !== app.resume_folder && !['use_today', 'use_lock', 'send_same_resume'].includes(decision)) {
     const lock = lockFor(app.to_email);
     if (lock && lock.resume_folder !== folder) throw new Error(`This vendor is locked to ${lock.resume_folder}`);
     app = switchResume(app, folder);
@@ -187,6 +187,14 @@ export function resolveHold(id, decision, folder) {
     }
     case 'tomorrow':     return requeue({ send_after: tomorrow() }, `send tomorrow (${tomorrow()})`);
     case 'next_week':    return requeue({ send_after: nextMonday() }, `send next week (${nextMonday()})`);
+    case 'send_same_resume': {   // repost hold: resend exactly the resume this recruiter already has
+      if (!app.todays_folder) throw new Error('No earlier resume is recorded for this recruiter');
+      const lock = lockFor(app.to_email);
+      if (lock && lock.resume_folder !== app.todays_folder) throw new Error(`This vendor is locked to ${lock.resume_folder}`);
+      const prev = app.todays_folder;
+      switchResume(app, prev);
+      return requeue({ override_repost: 1 }, `send anyway with the same resume they already got (folder ${prev})`);
+    }
     case 'send_anyway':  return requeue({ override_repost: 1 }, 'send anyway (you confirmed it is not a repost)');
     case 'send_anyway_today': return requeue({ override_same_day: 1 }, `send anyway: a second resume (${app.resume_folder}) to this vendor today`);
     case 'retry':        return requeue({}, 'retry');
