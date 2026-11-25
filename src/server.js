@@ -7,7 +7,8 @@
 // Job text comes from the internet and is always HTML-escaped.
 import express from 'express';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import mammoth from 'mammoth';
 import { config, ROOT } from './config.js';
 import { db, getState, setState, logEvent } from './db.js';
 import { sendTestToSelf, verifyEmail, HISTORY_PATH, setCcEmails, getCcEmails } from './email.js';
@@ -17,7 +18,7 @@ import { queueStatus, setSendingPaused } from './mailer.js';
 import { approve, cancelQueued, skip, resolveHold, setLock, removeLock, rematch, rematchAll, rematchSome, rematchStatus, stopRematch, editQueued, setVendorStatus, addBlacklist, removeBlacklist } from './actions.js';
 import { addManualJob } from './manual.js';
 import {
-  esc, table, layout, counts, reviewPage, REVIEW_SCRIPT, draftView, emailView,
+  esc, table, layout, counts, reviewPage, REVIEW_SCRIPT, draftView, emailView, attachmentOf, resumePreview,
   overviewPage, sentPage, vendorsPage, logsPage, healthPage,
   freshItems, scrapedPage, APP_JS,
 } from './ui.js';
@@ -126,7 +127,8 @@ export function startServer() {
   app.get('/', (_req, res) => res.send(layout('overview', overviewPage())));
   app.get('/review', (_req, res) => res.send(layout('review', reviewPage(false), { split: true, script: REVIEW_SCRIPT })));
   app.get('/manual', (_req, res) => res.send(layout('manual', reviewPage(true), { split: true, script: REVIEW_SCRIPT })));
-  app.get('/sent', (_req, res) => res.send(layout('sent', sentPage())));
+  app.get('/sent', (req, res) => res.send(layout('sent', sentPage({ q: String(req.query.q ?? '') }))));
+  app.get('/sent/rows', (req, res) => res.type('application/json').send(sentPage({ q: String(req.query.q ?? ''), rowsOnly: true })));
   app.get('/scraped', (req, res) => res.send(layout('scraped', scrapedPage({ show: String(req.query.show ?? ''), day: String(req.query.day ?? 'today'), q: String(req.query.q ?? '').slice(0, 200) }))));
   app.get('/vendors', (_req, res) => res.send(layout('vendors', vendorsPage())));
   app.get('/logs', (req, res) => res.send(layout('logs', logsPage(String(req.query.view ?? '')))));
@@ -137,7 +139,26 @@ export function startServer() {
     if (!a) return res.status(404).send(layout('', notFound(`There is no email #${esc(req.params.id)}.`)));
     const j = jobById(a.job_id);
     if (['draft', 'held', 'failed'].includes(a.status)) return res.redirect(`/${j.source === 'manual' ? 'manual' : 'review'}?open=${a.id}`);
-    res.send(layout('sent', emailView(a, j)));
+    res.send(layout('sent', emailView(a, j, { q: String(req.query.q ?? '').slice(0, 200) })));
+  });
+  // The resume an email carried: the saved copy when there is one (see attachmentOf in ui.js).
+  app.get('/app/:id/attachment/file', (req, res) => {
+    const a = appById(req.params.id);
+    const att = a && attachmentOf(a);
+    if (!att || att.state === 'missing') return res.status(404).send(layout('sent', notFound('That resume file is no longer on disk.')));
+    res.download(att.path, basename(att.path));
+  });
+  // Read it in the dashboard: .docx through mammoth (already used for matching), PDF straight in the browser.
+  app.get('/app/:id/attachment', async (req, res) => {
+    const a = appById(req.params.id);
+    const att = a && attachmentOf(a);
+    if (!att || att.state === 'missing') return res.status(404).send(layout('sent', notFound('That resume file is no longer on disk.')));
+    if (/\.pdf$/i.test(att.path)) return res.type('application/pdf').set('Content-Disposition', `inline; filename="${basename(att.path).replace(/"/g, '')}"`).sendFile(att.path);
+    if (!/\.docx$/i.test(att.path)) return res.redirect(`/app/${a.id}/attachment/file`);
+    let html;
+    try { html = (await mammoth.convertToHtml({ path: att.path })).value; }
+    catch (e) { return res.send(layout('sent', notFound(`Could not read ${esc(basename(att.path))}: ${esc(e.message)}`))); }
+    res.send(layout('sent', resumePreview(a, att, html)));
   });
   app.get('/history', (_req, res) => {
     const text = existsSync(HISTORY_PATH) ? readFileSync(HISTORY_PATH, 'utf8') : 'Nothing sent yet.';

@@ -1,10 +1,11 @@
 // Drafting, the Gmail connection, and the human-readable Sent_History.md.
 // Nothing here decides WHEN to send — that's the paced queue in mailer.js.
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import nodemailer from 'nodemailer';
 import { config, emailConfigured, ROOT } from './config.js';
-import { now, getState, setState, logEvent } from './db.js';
+import { db, now, getState, setState, logEvent } from './db.js';
 import { familyForTitle } from './resumes.js';
 import { blockedAddress } from './filters.js';
 
@@ -501,14 +502,31 @@ export async function deliver({ to, subject, body, resumePath, cc = ccFor(to) })
     html: toHtml(body),
     attachments: [{ filename: basename(resumePath), path: resumePath }],
   });
-  return info.messageId ?? null;
+  return { messageId: info.messageId ?? null, cc };
+}
+
+// The body as the recruiter saw it, for the dashboard: same text and bold as the HTML part, without its inline colours.
+export function sentBodyHtml(body) {
+  return escHtml(plainText(String(body ?? ''))).replace(BOLD, '<b>$1</b>');
+}
+
+// Keep the exact resume that is about to be attached: data/sent-resumes/<first 16 of sha256>/<file name>.
+// Content-addressed, so the same version is stored once however many times it is sent, and editing the
+// original on the Desktop later never changes what an old email shows.
+export const SENT_RESUMES_DIR = join(config.dataDir, 'sent-resumes');
+export function snapshotResume(resumePath) {
+  const buf = readFileSync(resumePath);
+  const dir = join(SENT_RESUMES_DIR, createHash('sha256').update(buf).digest('hex').slice(0, 16));
+  const out = join(dir, basename(resumePath));
+  if (!existsSync(out)) { mkdirSync(dir, { recursive: true }); writeFileSync(out, buf); }
+  return out;
 }
 
 // A complete sample email with a real resume attached, sent only to your own Gmail address.
 export async function sendTestToSelf(resumePath) {
   const job = { id: 0, title: 'Senior GenAI Engineer (sample)', location_jd: 'Remote', recruiter_name: config.senderName, company: '' };
   const d = buildDraft(job, { matched: ['Python', 'LLM', 'RAG', 'LangChain'] });
-  return deliver({ to: config.gmailUser, subject: `[TEST] ${d.subject}`, body: d.body, resumePath, cc: [] });
+  return (await deliver({ to: config.gmailUser, subject: `[TEST] ${d.subject}`, body: d.body, resumePath, cc: [] })).messageId;
 }
 
 // Human-readable log, appended right after each real send. Never read back by the program.
@@ -540,4 +558,24 @@ ${jd}
 
 `;
   appendFileSync(HISTORY_PATH, entry, 'utf8');
+}
+
+// One-time (Nov 2026): sends before sent_cc existed only kept the CC in Sent_History.md. Copy it from there,
+// matched on send time + recipient. Entries with no CC line went out with no CC. Unmatched rows stay NULL.
+if (getState('sent_cc_backfilled', '0') !== '1') {
+  try {
+    if (existsSync(HISTORY_PATH)) {
+      const set = db.prepare(`UPDATE applications SET sent_cc = ? WHERE status = 'sent' AND sent_cc IS NULL AND sent_at = ? AND lower(to_email) = lower(?)`);
+      let filled = 0;
+      for (const entry of readFileSync(HISTORY_PATH, 'utf8').split(/^## /m).slice(1)) {
+        const at = entry.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) /)?.[1];
+        const to = entry.match(/^- \*\*To:\*\* (\S+)/m)?.[1];
+        if (!at || !to) continue;
+        const cc = entry.match(/^- \*\*CC:\*\* (.+)$/m)?.[1] ?? '';
+        filled += Number(set.run(cc.split(',').map(c => c.trim()).filter(Boolean).join(','), at, to).changes);
+      }
+      logEvent('info', 'sent_cc_backfill', null, `Recorded the CC of ${filled} earlier send(s) from Sent_History.md`);
+    }
+    setState('sent_cc_backfilled', '1');
+  } catch (e) { logEvent('warn', 'sent_cc_backfill', null, `Could not read CCs from Sent_History.md: ${e.message}`); }
 }

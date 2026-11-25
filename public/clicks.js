@@ -16,7 +16,10 @@
 //            at random (never the same one twice running), because identical keystrokes sound machine-gunned.
 //
 // Every buffer starts at zero amplitude and ends with a raised-cosine fade, so playback can't pop.
-// The AudioContext is created on the first pointer or key press (browsers block audio before a user gesture).
+// The sounds are prepared while the page is idle after loading (AudioBuffers don't need a running AudioContext),
+// so a press only has to start playback: preparing them inside the first press used to stall it for ~40 ms on
+// every page. The AudioContext itself is created on the first pointer or key press (browsers block audio before
+// a user gesture). The synthesised keyboard is only rendered if the recording can't be loaded.
 // The on/off choice is kept in localStorage under "rv-sound".
 (() => {
   'use strict';
@@ -52,12 +55,16 @@
   let enabled = true;
   try { enabled = localStorage.getItem(STORE_KEY) !== 'off'; } catch { /* storage blocked: default on */ }
 
+  const RATE = 48000;   // sample rate the buffers are rendered at; playback resamples if the device differs
   let ctx = null;
   let out = null;
-  let bank = null;
+  const bank = {};      // name -> AudioBuffer[]
   let pressed = false;
   let samples = null;   // { down, up } AudioBuffers once decoded
+  let synthKeys = false;
   const last = {};
+
+  const makeBuffer = (n) => new AudioBuffer({ numberOfChannels: 1, length: n, sampleRate: RATE });
 
   // Deterministic PRNG (mulberry32), so renders are stable between page loads.
   function prng(seed) {
@@ -113,9 +120,9 @@
 
   function renderKeyDown(r, seed) {
     const rand = prng(seed);
-    const rate = ctx.sampleRate;
+    const rate = RATE;
     const n = Math.ceil(0.075 * rate);
-    const buffer = ctx.createBuffer(1, n, rate);
+    const buffer = makeBuffer(n);
     const data = buffer.getChannelData(0);
     const at = r.bottomAt[0] + rand() * (r.bottomAt[1] - r.bottomAt[0]);
 
@@ -139,9 +146,9 @@
 
   function renderKeyUp(r, seed) {
     const rand = prng(seed);
-    const rate = ctx.sampleRate;
+    const rate = RATE;
     const n = Math.ceil(0.045 * rate);
-    const buffer = ctx.createBuffer(1, n, rate);
+    const buffer = makeBuffer(n);
     const data = buffer.getChannelData(0);
     const slap = burst(n, rate, rand, 0, [jitter(rand, r.slap[0], 0.06), r.slap[1], r.slap[2]], 0.7);
     const cases = r.cases.map(([f, tau, g]) => [2 * Math.PI * jitter(rand, f, 0.04), tau, g]);
@@ -157,9 +164,9 @@
 
   // Early-Mac UI tick: square pulse plus a short body, through 22.25 kHz / 8-bit and a small-speaker low-pass.
   function renderTick({ length, freq, tau, body, level }) {
-    const rate = ctx.sampleRate;
+    const rate = RATE;
     const n = Math.ceil(length * rate);
-    const buffer = ctx.createBuffer(1, n, rate);
+    const buffer = makeBuffer(n);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < n; i++) {
       const t = i / rate;
@@ -182,6 +189,43 @@
     return buffer;
   }
 
+  // UI ticks: two short buffers, cheap enough to make on demand if a press comes before the idle preparation.
+  function prepareTicks() {
+    if (bank.down) return;
+    bank.down = [renderTick({ length: 0.03, freq: 1050, tau: 0.0022, body: [520, 0.006], level: 0.7 })];
+    bank.up = [renderTick({ length: 0.02, freq: 1600, tau: 0.0012, body: null, level: 0.4 })];
+  }
+
+  // Fallback keyboard, only when the recording is unavailable: six renders per key class.
+  function prepareSynthKeys() {
+    if (synthKeys) return;
+    synthKeys = true;
+    let seed = 1;
+    for (const kind of Object.keys(KEYS)) {
+      bank[`${kind}Down`] = Array.from({ length: VARIANTS }, () => renderKeyDown(KEYS[kind], seed++ * 7919));
+      bank[`${kind}Up`] = Array.from({ length: VARIANTS }, () => renderKeyUp(KEY_UP[kind], seed++ * 7919));
+    }
+  }
+
+  async function loadSamples() {
+    try {
+      // An offline context decodes without a user gesture and without opening the audio device.
+      const decoder = new OfflineAudioContext(1, 1, RATE);
+      const decode = async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`${url}: ${res.status}`);
+        return decoder.decodeAudioData(await res.arrayBuffer());
+      };
+      const [down, up] = await Promise.all([decode(SAMPLE_URLS.down), decode(SAMPLE_URLS.up)]);
+      samples = { down, up };
+    } catch {
+      idle(prepareSynthKeys);   // keep a synthesised keyboard
+    }
+  }
+
+  const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(fn, 200));
+  if (typeof AudioBuffer === 'function' && typeof OfflineAudioContext === 'function') idle(() => { prepareTicks(); loadSamples(); });
+
   function ensureAudio() {
     if (ctx) {
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
@@ -197,36 +241,13 @@
     out = ctx.createGain();
     out.gain.value = 0.8;
     out.connect(ctx.destination);
-    bank = {
-      down: [renderTick({ length: 0.03, freq: 1050, tau: 0.0022, body: [520, 0.006], level: 0.7 })],
-      up: [renderTick({ length: 0.02, freq: 1600, tau: 0.0012, body: null, level: 0.4 })],
-    };
-    loadSamples();
-    let seed = 1;
-    for (const kind of Object.keys(KEYS)) {
-      bank[`${kind}Down`] = Array.from({ length: VARIANTS }, () => renderKeyDown(KEYS[kind], seed++ * 7919));
-      bank[`${kind}Up`] = Array.from({ length: VARIANTS }, () => renderKeyUp(KEY_UP[kind], seed++ * 7919));
-    }
+    prepareTicks();
     return true;
-  }
-
-  async function loadSamples() {
-    try {
-      const decode = async (url) => {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`${url}: ${res.status}`);
-        return ctx.decodeAudioData(await res.arrayBuffer());
-      };
-      const [down, up] = await Promise.all([decode(SAMPLE_URLS.down), decode(SAMPLE_URLS.up)]);
-      samples = { down, up };
-    } catch {
-      /* keep the synthesised keyboard */
-    }
   }
 
   function playKey(kind, phase) {
     if (!enabled || !ensureAudio()) return;
-    if (!samples) { play(`${kind}${phase === 'down' ? 'Down' : 'Up'}`); return; }
+    if (!samples) { prepareSynthKeys(); play(`${kind}${phase === 'down' ? 'Down' : 'Up'}`); return; }
     const [centre, spread] = KEY_PITCH[kind];
     const source = ctx.createBufferSource();
     source.buffer = samples[phase];

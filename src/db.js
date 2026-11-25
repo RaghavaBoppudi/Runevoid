@@ -151,6 +151,8 @@ ensureColumns('applications', {
   hold_kind: 'TEXT', hold_reason: 'TEXT', todays_folder: 'TEXT', override_repost: 'INTEGER NOT NULL DEFAULT 0',
   override_same_day: 'INTEGER NOT NULL DEFAULT 0',   // you chose "Send Anyway": a second, different resume to this vendor today
   queued_at: 'TEXT', send_after: 'TEXT',
+  sent_cc: 'TEXT',        // the CC list that actually went out ('' = none; NULL = not recorded)
+  sent_resume: 'TEXT',    // copy of the exact file attached, under data/sent-resumes/ (NULL for sends before Nov 24 2026)
 });
 
 const p = (n) => String(n).padStart(2, '0');

@@ -12,7 +12,7 @@
 // Review and Manual push a draft over the list.
 import { config, emailConfigured, dailyCap, ROOT } from './config.js';
 import { db, getState, DB_PATH } from './db.js';
-import { ccFor, getCcEmails, HISTORY_PATH } from './email.js';
+import { ccFor, getCcEmails, HISTORY_PATH, sentBodyHtml } from './email.js';
 import { listResumeFiles, resumeLabel } from './resumes.js';
 import { draftWarnings, lockFor, lockLabel, parseVendor } from './rules.js';
 import { isPriority, queueStatus, queuedInOrder } from './mailer.js';
@@ -43,6 +43,10 @@ const ASSETS = { css: assetUrl('runevoid.css'),
 // ── Client script shared by every page ────────────────────────────────────────
 
 const CLIENT_JS = `
+// Buttons whose label changes (Scan Now / Scanning…) hold both labels: <span class="bl" data-alt="Scanning…"><span>Scan Now</span></span>
+// stacks the other one, invisible, in the same grid cell, so the button is as wide as the longer label from the
+// start and never resizes or pushes its neighbours. setLabel swaps the visible one.
+function setLabel(b, text){ const s = b.querySelector('.bl > span'); if (s) s.textContent = text; else b.textContent = text }
 async function post(url, data){
   const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Runevoid':'1'},body:JSON.stringify(data||{})});
   return r.json();
@@ -53,19 +57,44 @@ async function simple(url, data, btn, confirmText){
   const j = await post(url, data);
   if (j.ok) location.reload(); else { rvAlert(j.error || 'Failed'); if (btn) btn.disabled = false }
 }
+// Switches: let the knob finish its slide before the reload, and don't grey the switch out mid-slide
+// (simple() disables its control, which would flash the switch at half opacity). On failure the knob slides back.
+async function flip(input, url, data){
+  const t0 = performance.now();
+  input.style.pointerEvents = 'none';
+  let j; try { j = await post(url, data) } catch (e) { j = { ok: false, error: e.message } }
+  if (!j.ok) { input.checked = !input.checked; input.style.pointerEvents = ''; rvAlert(j.error || 'Failed'); return }
+  const left = 180 - (performance.now() - t0);
+  if (left > 0) await new Promise(r => setTimeout(r, left));
+  location.reload();
+}
 // Scan Now: checks nvoids immediately (skipping the wait after failed checks) and says what happened.
 async function pollNow(b){
   const msg = document.getElementById('scan-msg');
-  const label = b.dataset.label || b.innerHTML; b.dataset.label = label;
-  b.disabled = true; b.classList.add('busy'); b.lastChild.textContent = 'Scanning…';
+  b.disabled = true; b.classList.add('busy'); setLabel(b, 'Scanning…');
   let j; try { j = await post('/api/poll') } catch (e) { j = { ok: false, error: e.message } }
   const err = !j.ok || j.error ? (j.error || 'Scan failed') : j.paused ? 'The watcher is paused. Turn on Watch nvoids first.' : j.skipped ? 'A scan is already running.' : '';
   const say = (t, bad) => { if (msg) { msg.textContent = t; msg.title = t; msg.classList.toggle('bad', !!bad) } };
   b.classList.remove('busy');
-  if (err) { say(/HTTP 52\\d/.test(err) ? 'nvoids is down (' + err.match(/HTTP 52\\d/)[0] + ')' : /fetch failed|ENOTFOUND|ECONN|timed? ?out|abort/i.test(err) ? 'Can’t reach nvoids' : err, true); if (msg) msg.title = err; b.innerHTML = label; b.disabled = false; return }
-  if (j.new || j.drafted) { say(j.new + ' new · ' + j.drafted + ' drafted'); setTimeout(() => location.reload(), 900); return }
-  say('No new postings'); b.innerHTML = label; b.disabled = false;
+  if (err) { say(/HTTP 52\\d/.test(err) ? 'nvoids is down (' + err.match(/HTTP 52\\d/)[0] + ')' : /fetch failed|ENOTFOUND|ECONN|timed? ?out|abort/i.test(err) ? 'Can’t reach nvoids' : err, true); if (msg) msg.title = err; setLabel(b, 'Scan Now'); b.disabled = false; return }
+  // No page reload: a reload a moment later used to swallow whatever you clicked in between. Review and Manual
+  // pull the new drafts into the list in place; every page updates the Review badge.
+  say(j.new || j.drafted ? j.new + ' new · ' + j.drafted + ' drafted' : 'No new postings');
+  setLabel(b, 'Scan Now'); b.disabled = false;
+  if (j.drafted && typeof pullFresh === 'function') pullFresh();
+  refreshBadge();
   setTimeout(() => say(''), 6000);
+}
+// Sidebar Review badge from the server's count (after a scan, or when new drafts arrive).
+async function refreshBadge(){
+  try {
+    const { pending } = await (await fetch('/api/summary')).json();
+    const tab = document.querySelector('.sb-item[href="/review"]'); if (!tab) return;
+    let b = tab.querySelector('b');
+    if (!pending) { if (b) b.remove(); return }
+    if (!b) { b = document.createElement('b'); tab.append(b) }
+    b.textContent = pending;
+  } catch {}
 }
 // Re-match runs in the background: Stop ends it after the draft in hand, and the numbers update in place
 // (no page reloads, so nothing you have open or typed is lost).
@@ -150,6 +179,25 @@ const APP_JS_URL = `/static/app.js?v=${createHash('sha256').update(APP_JS).diges
 const REVIEW_JS = `
 const list = document.getElementById('list'), pane = document.getElementById('pane'), filter = document.getElementById('filter');
 let current = null;
+// Rows never move under the pointer. New drafts and demotions wait while the pointer is moving over the list or a
+// press is held, and are applied once it rests (1.5 s still) or leaves; otherwise a row could slide away between
+// press and release, and the click would open the wrong draft or nothing.
+let hovering = false, holding = false, lastMove = 0, steadyTimer = 0;
+const waiting = new Set();
+list.addEventListener('pointerenter', () => { hovering = true });
+list.addEventListener('pointerleave', () => { hovering = false; flushSteady() });
+list.addEventListener('pointermove', () => { lastMove = performance.now() }, { passive: true });
+list.addEventListener('pointerdown', () => { holding = true }, { passive: true });
+addEventListener('pointerup', () => { if (holding) { holding = false; flushSteady() } }, { passive: true });
+addEventListener('pointercancel', () => { holding = false }, { passive: true });
+const aiming = () => holding || (hovering && performance.now() - lastMove < 1500);
+function whenSteady(fn){ waiting.add(fn); flushSteady() }
+function flushSteady(){
+  clearTimeout(steadyTimer);
+  if (!waiting.size) return;
+  if (aiming()) { steadyTimer = setTimeout(flushSteady, 500); return }
+  const fns = [...waiting]; waiting.clear(); for (const fn of fns) fn();
+}
 const items = () => [...list.querySelectorAll('.item:not(.gone)')].filter(i => i.style.display !== 'none');
 async function openItem(el, focusList){
   if (!el) return;
@@ -164,7 +212,15 @@ async function openItem(el, focusList){
   let j; try { j = await (await fetch('/api/card/' + el.dataset.id)).json() } catch { j = {html:'<div class="empty">Could not load this draft. Click it again.</div>'} }
   if (current !== el) return;
   pane.innerHTML = j.html || '<div class="empty">Not found.</div>';
+  pane.dataset.shownAt = String(performance.now());
 }
+// A draft's buttons ignore clicks for the first 350 ms after it appears. Approve or Skip opens the next draft in the
+// same place within milliseconds, so without this the second click of a double-click (or a quick second a / s)
+// would act on the next draft, which you haven't read.
+pane.addEventListener('click', e => {
+  const b = e.target instanceof Element ? e.target.closest('button') : null;
+  if (b && performance.now() - Number(pane.dataset.shownAt || 0) < 350) { e.preventDefault(); e.stopPropagation() }
+}, true);
 list.addEventListener('click', e => {
   if (e.target.matches('input[type=checkbox]')) { updateBulk(); return }
   const it = e.target.closest('.item'); if (it) { e.preventDefault(); openItem(it) }
@@ -232,12 +288,12 @@ function updateBulk(){ const n = selected().length; const b = document.getElemen
 async function bulk(action, btn){
   const ids = selected(); if (!ids.length) return;
   if (action === 'skip' && !(await rvConfirm('Skip ' + ids.length + ' draft(s)?', { ok: 'Skip' }))) return;
-  btn.disabled = true; btn.textContent = action === 'rematch' ? 'Re-matching…' : 'Skipping…';
+  btn.disabled = true; setLabel(btn, action === 'rematch' ? 'Re-matching…' : 'Skipping…');
   const j = await post('/api/bulk', {action, ids});
   if (!j.ok) await rvAlert(j.error); location.reload();
 }
 function selectAllShown(on){ for (const it of items()) it.querySelector('input').checked = on; list.classList.toggle('selecting', on); updateBulk() }
-function toggleSelect(b){ const on = list.classList.toggle('selecting'); if (!on) selectAllShown(false); b.textContent = on ? 'Cancel' : 'Select' }
+function toggleSelect(b){ const on = list.classList.toggle('selecting'); if (!on) selectAllShown(false); setLabel(b, on ? 'Cancel' : 'Select') }
 // keyboard
 document.addEventListener('keydown', e => {
   const t = e.target; const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && t.type !== 'checkbox';
@@ -263,7 +319,8 @@ let maxId = Math.max(0, ...[...list.querySelectorAll('.item')].map(i => Number(i
 const shown = (g) => { let n = 0, el = g.nextElementSibling; while (el && !el.classList.contains('group')) { if (el.classList.contains('item') && !el.classList.contains('gone')) n++; el = el.nextElementSibling } return n };
 for (const g of list.querySelectorAll('.group')) g.dataset.hidden = Number(g.querySelector('b').textContent) - shown(g);
 function recount(){ for (const g of list.querySelectorAll('.group')) g.querySelector('b').textContent = shown(g) + Number(g.dataset.hidden || 0) }
-function demote(){
+function demote(){ whenSteady(demoteNow) }
+function demoteNow(){
   if (!hotHead || !stdHead) return; let moved = false;
   for (const it of [...list.querySelectorAll('.item.hot')]) if (Date.now() - Number(it.dataset.posted) >= PRIO_MS) {
     it.classList.remove('hot'); it.classList.add('std'); stdHead.after(it); moved = true }
@@ -282,7 +339,8 @@ function sortGroup(head){
   for (const item of items) fragment.append(item);
   list.insertBefore(fragment, el);
 }
-async function pullFresh(){
+function pullFresh(){ whenSteady(pullFreshNow) }
+async function pullFreshNow(){
   if (!hotHead || document.hidden) return;
   try {
     const r = await (await fetch('/api/fresh?source=' + (list.dataset.manual === '1' ? 'manual' : 'nvoids') + '&after=' + maxId)).json();
@@ -296,7 +354,7 @@ async function pullFresh(){
       if (x.kind === 'hot') hotHead.after(el); else stdHead.after(el);
     }
     sortGroup(hotHead); sortGroup(stdHead);
-    applyFilter(); recount();
+    applyFilter(); recount(); refreshBadge();
   } catch {}
 }
 setInterval(pullFresh, 8000); setInterval(demote, 15000); demote();
@@ -389,8 +447,11 @@ function phoneRow(job) {
   const [num, ext] = p.split(' ext. ');
   const tel = `+1${num.replace(/\D/g, '')}${ext ? `,${ext}` : ''}`;
   return `<div class="row"><label>Phone</label><span style="flex:1"></span><a class="val ink" href="tel:${tel}" title="Call">${esc(p)}</a>
-   <button type="button" class="small" onclick="navigator.clipboard.writeText('${esc(p)}');this.textContent='Copied';setTimeout(()=>this.textContent='Copy',1200)">Copy</button></div>`;
+   <button type="button" class="small" onclick="navigator.clipboard.writeText('${esc(p)}');setLabel(this,'Copied');setTimeout(()=>setLabel(this,'Copy'),1200)">${twoLabel('Copy', 'Copied')}</button></div>`;
 }
+
+// A button label with room reserved for the other label it can switch to (see setLabel in CLIENT_JS).
+const twoLabel = (text, alt) => `<span class="bl" data-alt="${esc(alt)}"><span>${esc(text)}</span></span>`;
 
 // Icons live in src/icons.js: 16×16 one-bit bitmaps in the early-Macintosh style.
 
@@ -438,6 +499,7 @@ export function layout(active, body, { searchText = '', script = '', split = fal
 <link rel="icon" type="image/svg+xml" href="${ASSETS.favicon}">
 <link rel="icon" type="image/png" sizes="32x32" href="${ASSETS.favicon32}">
 <link rel="apple-touch-icon" href="${ASSETS.touchIcon}">
+<script type="speculationrules">{"prefetch":[{"where":{"selector_matches":".sb-item, .dicon, .sb-profile, .seg a, .chips a"},"eagerness":"moderate"}]}</script>
 </head>
 <body data-next-at="${q.paused || q.dryRun ? 0 : (q.nextAt ?? 0)}" data-pending="${c.newPostings + c.waiting + c.fix}">
 ${desk('left')}
@@ -467,7 +529,7 @@ ${desk('right')}
      ${q.dryRun ? '<span class="tag soft" title="DRY_RUN=true in .env: nothing is really sent">Dry run</span>' : ''}
      ${q.queued ? `<span>${q.paused ? 'Sending paused' : 'Next send'} <b data-countdown data-idle="${q.paused ? '' : 'at cap'}">—</b></span>` : ''}
      <span id="scan-msg" class="scan-msg" role="status"></span>
-     <button type="button" class="small scan" onclick="pollNow(this)" title="Check nvoids for new postings now">${icon('refresh')}<span>Scan Now</span></button>
+     <button type="button" class="small scan" onclick="pollNow(this)" title="Check nvoids for new postings now">${icon('refresh')}${twoLabel('Scan Now', 'Scanning…')}</button>
     </div>
    </div>
    ${split ? `<div class="stack" id="stack">${body}</div>` : `<div class="scroller"><div class="pagewrap${key === 'scraped' || key === 'logs' || key === 'search' ? ' wide' : ''}">${body}</div></div>`}
@@ -511,9 +573,9 @@ export function reviewPage(manual) {
  ${manual ? addJdForm() : hero('review', 'Review', total ? `${total} draft${total === 1 ? '' : 's'} waiting. Open one to check the email, then approve or skip it.` : 'New AI/ML postings appear here as Runevoid finds them.')}
  <div class="listtools"${total ? '' : ' style="display:none"'}>
   <div class="filterbar"><input id="filter" type="search" placeholder="Filter" aria-label="Filter drafts (press /)"><span class="sp"></span>
-   <button type="button" class="small" onclick="toggleSelect(this)">Select</button>
+   <button type="button" class="small" onclick="toggleSelect(this)">${twoLabel('Select', 'Cancel')}</button>
    ${total ? `<button type="button" class="small" ${rm.running ? 'disabled' : ''} onclick="simple('/api/rematch-all',{source:'${manual ? 'manual' : 'nvoids'}'},this,'Re-score all ${total} drafts against your current resumes? Unedited drafts switch to the best resume.')">Re-match All</button>` : ''}</div>
-  <div class="bulk" id="bulk"><span><b id="bulk-n">0</b> selected</span><span class="sp"></span><button type="button" class="small" onclick="selectAllShown(true)">Select All</button><button type="button" class="small" onclick="bulk('rematch',this)">Re-match</button><button type="button" class="small" onclick="bulk('skip',this)">Skip</button><button type="button" class="small plain" onclick="selectAllShown(false)">Done</button></div>
+  <div class="bulk" id="bulk"><span><b id="bulk-n">0</b> selected</span><span class="sp"></span><button type="button" class="small" onclick="selectAllShown(true)">Select All</button><button type="button" class="small" onclick="bulk('rematch',this)">${twoLabel('Re-match', 'Re-matching…')}</button><button type="button" class="small" onclick="bulk('skip',this)">${twoLabel('Skip', 'Skipping…')}</button><button type="button" class="small plain" onclick="selectAllShown(false)">Done</button></div>
   ${rm.running ? `<div class="rm-row"><span data-rm-text>${rm.stopping ? 'Stopping…' : 'Re-matching…'} ${rm.done}/${rm.total}</span><button type="button" class="small danger" data-rm-stop onclick="stopRematch(this)">Stop</button><a href="" data-rm-done style="display:none" onclick="location.reload();return false">Refresh</a></div>` : ''}
  </div>
  <div class="list" id="list" data-manual="${manual ? 1 : 0}" data-prio-ms="${config.priorityWindowMinutes * 60_000}">
@@ -652,11 +714,62 @@ export function draftView(app, job) {
 <div class="draft-actions">${actions.join('')}</div></div>`;
 }
 
-// Read-only view of a sent / queued / skipped email (search results open these).
-export function emailView(app, job) {
+// Which file an email carried, and how sure we are it is the same bytes:
+//   exact   — the copy saved at send time (sends from Nov 24 2026 on)
+//   same    — the original, not modified since the send
+//   changed — the original, edited after the send: what you open is the newer version
+//   pending — not sent yet: this is the file it will attach
+//   missing — no file on disk any more
+export function attachmentOf(app) {
+  if (app.sent_resume && existsSync(app.sent_resume)) return { path: app.sent_resume, state: 'exact' };
+  if (!app.resume_path || !existsSync(app.resume_path)) return { path: app.resume_path ?? '', state: 'missing' };
+  if (app.status !== 'sent' || !app.sent_at) return { path: app.resume_path, state: 'pending' };
+  const sentMs = new Date(app.sent_at.replace(' ', 'T')).getTime();   // sent_at is local wall-clock time
+  return { path: app.resume_path, state: statSync(app.resume_path).mtimeMs > sentMs + 1000 ? 'changed' : 'same' };
+}
+
+// The attached resume, read in place. mammoth's HTML is from your own file, but links are still limited to web and
+// mail addresses so nothing in a document can run script on the dashboard.
+export function resumePreview(app, att, html) {
+  const safe = String(html).replace(/\s(href|src)="([^"]*)"/gi, (m, k, v) => (k.toLowerCase() === 'src' ? /^data:image\//i.test(v) : /^(https?:|mailto:)/i.test(v)) ? m : '');
+  const name = att.path.split('/').pop();
+  const note = { exact: 'The exact file attached to this email.', same: 'Unchanged since this email was sent.',
+    changed: 'This file was edited after the email was sent, so this is the newer version, not the one the recruiter got.',
+    pending: 'The file this email will attach.' }[att.state] ?? '';
+  return `<div class="filterbar"><a class="quiet" href="/app/${app.id}">‹ Back to the email</a><span class="sp"></span><a class="small btnlink" href="/app/${app.id}/attachment/file" download>Download</a></div>
+<div class="draft-head"><div class="kicker"><span class="tag${att.state === 'changed' ? ' accent' : ''}">Attachment</span><span>${esc(name)}</span></div>
+ <div class="meta">${esc(note)}</div></div>
+<div class="grp"><div class="resume-doc">${safe}</div></div>`;
+}
+
+// Read-only view of a sent / queued / skipped email: exactly what went out (search results open these).
+export function emailView(app, job, { q = '' } = {}) {
   const when = [app.sent_at && `Sent ${esc(app.sent_at)}`, app.approved_at && `approved ${esc(app.approved_at)}`].filter(Boolean).join(' · ');
   const st = app.status[0].toUpperCase() + app.status.slice(1);
-  return `<div class="draft-head">
+  const sent = app.status === 'sent';
+  const from = config.senderName ? `${config.senderName} <${config.gmailUser}>` : config.gmailUser;
+  // CC: what really went out if recorded; otherwise what this email is set to use.
+  let cc, ccNote = '';
+  // (A per-email CC list is exactly what a send used, so it stands in when sent_cc wasn't recorded.)
+  if (app.sent_cc !== null && app.sent_cc !== undefined) cc = app.sent_cc.split(',').filter(Boolean);
+  else if (app.cc_emails !== null && app.cc_emails !== undefined) cc = app.cc_emails.split(',').filter(Boolean);
+  else if (sent) { cc = null; ccNote = 'Not recorded for this send'; }
+  else { cc = ccFor(app.to_email); ccNote = cc.length ? 'your CC list' : ''; }
+  const ccVal = cc === null ? `<span class="val">${ccNote}</span>`
+    : `<span class="val">${cc.length ? esc(cc.join(', ')) : 'None'}${ccNote && cc.length ? ` <span class="meta">(${ccNote})</span>` : ''}</span>`;
+  const att = attachmentOf(app);
+  const name = att.path ? att.path.split('/').pop() : '';
+  const attNote = {
+    exact: 'the exact file that was attached',
+    same: 'unchanged since it was sent',
+    changed: `edited after this was sent: opening it shows the newer version`,
+    pending: 'will be attached',
+    missing: 'file no longer on disk',
+  }[att.state];
+  const attLinks = att.state === 'missing' ? '' : `<a class="small btnlink" href="/app/${app.id}/attachment">Open</a><a class="small btnlink" href="/app/${app.id}/attachment/file" download>Download</a>`;
+  const back = `/sent${q ? `?q=${encodeURIComponent(q)}` : ''}`;
+  return `<div class="filterbar"><a class="quiet" href="${esc(back)}">‹ ${q ? `Results for “${esc(q)}”` : 'Sent'}</a></div>
+<div class="draft-head">
  <div class="kicker"><span class="tag ${app.status === 'failed' ? 'accent' : ''}">${esc(st)}</span>${when ? `<span>${when}</span>` : ''}</div>
  <h3>${jobTitle(job)}</h3>
  <div class="meta">${jobLine(job)}</div>
@@ -664,15 +777,19 @@ export function emailView(app, job) {
 </div>
 <div class="section">Email</div>
 <div class="grp">
- <div class="row"><span class="lbl"><span>To</span></span><span class="val">${esc(app.to_email)}</span></div>
+ <div class="row"><span class="lbl"><span>From</span></span><span class="val">${esc(from)}</span></div>
+ <div class="row"><span class="lbl"><span>To</span></span><span class="val">${esc(job.recruiter_name ? `${job.recruiter_name} <${app.to_email}>` : app.to_email)}</span></div>
  ${phoneRow(job)}
- ${app.cc_emails ? `<div class="row"><span class="lbl"><span>Cc</span></span><span class="val">${esc(app.cc_emails.split(',').join(', '))}</span></div>` : ''}
- <div class="row"><span class="lbl"><span>Subject</span></span><span class="val ink" style="white-space:normal;text-align:right;max-width:70%">${esc(app.subject)}</span></div>
- <div class="row"><span class="lbl"><span>Resume</span></span><span class="val">${esc(resumeLabel(app.resume_folder))} · ${app.match_score ?? '?'}%</span></div>
+ <div class="row"><span class="lbl"><span>Cc</span></span>${ccVal}</div>
+ <div class="row"><span class="lbl"><span>Subject</span></span><span class="val ink" style="white-space:normal;text-align:right;max-width:70%">${esc(app.subject.replace(/\*\*/g, ''))}</span></div>
+ <div class="row tall"><span class="lbl"><span>Attachment</span><span class="sub one${att.state === 'changed' || att.state === 'missing' ? ' bad' : ''}">${esc(name || '—')} · ${attNote}</span></span>${attLinks}</div>
+ <div class="row"><span class="lbl"><span>Resume</span></span><span class="val">${esc(resumeLabel(app.resume_folder))} · ${app.match_score ?? '?'}%${app.locked ? ' · locked' : ''}</span></div>
 </div>
 <div class="section">Message</div>
-<div class="grp text"><pre>${esc(app.body)}</pre></div>
-<div class="grp" style="margin-top:20px"><details class="disc" open><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details></div>
+<div class="grp text"><pre>${sentBodyHtml(app.body)}</pre></div>
+${app.auto_body && app.auto_body !== app.body ? `<p class="foot">You edited this message before it was sent.</p>` : ''}
+<div class="grp" style="margin-top:20px"><details class="disc"><summary class="row"><span class="lbl"><span>Job description</span></span><span class="chev"></span></summary><div class="disc-body"><pre>${esc(job.jd_text)}</pre></div></details></div>
+${app.message_id ? `<p class="foot">Message-ID ${esc(app.message_id)}</p>` : ''}
 ${app.status === 'queued' ? `<div class="btnrow"><button type="button" onclick="simple('/api/cancel/${app.id}',{},this)">Pull Back from Queue</button></div>` : ''}`;
 }
 
@@ -721,9 +838,9 @@ ${alerts.length ? `<div class="grp">${alerts.map(([href, cls, t]) => `<a class="
 <div class="section">Controls</div>
 <div class="grp">
  <div class="row"><span class="lbl"><span>Send approved emails</span><span class="sub">${c.q.paused ? 'Paused. Approved emails wait in the queue.' : 'One at a time, paced like a person.'}</span></span>
-  <label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="simple('/api/pause-sending',{on:!this.checked},this)" aria-label="Send approved emails"><span></span></label></div>
+  <label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="flip(this,'/api/pause-sending',{on:!this.checked})" aria-label="Send approved emails"><span></span></label></div>
  <div class="row"><span class="lbl"><span>Watch nvoids</span><span class="sub">${watcherPaused ? 'Paused. No new postings are read.' : `Checks every ${config.pollSeconds} seconds.`}</span></span>
-  <label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="simple('/api/pause-watcher',{on:!this.checked},this)" aria-label="Watch nvoids"><span></span></label></div>
+  <label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="flip(this,'/api/pause-watcher',{on:!this.checked})" aria-label="Watch nvoids"><span></span></label></div>
  <div class="row"><span class="lbl"><span>Scan for new postings</span><span class="sub">Last scan ${esc(String(lastPoll).slice(11, 16) || '–')}${pollOk ? '' : ', failed'}</span></span><button type="button" onclick="pollNow(this)"><span>Scan Now</span></button></div>
  <div class="row"><span class="lbl"><span>Test email</span><span class="sub">Sends a sample to your own address.</span></span><button type="button" onclick="testSend(this)">Send Test…</button></div>
 </div>
@@ -759,19 +876,75 @@ async function saveQueued(b){
 
 // ── Sent history ──────────────────────────────────────────────────────────────
 
-export function sentPage() {
-  // Only the columns the list shows: a.* dragged every email body and ranking through the sort.
+// Sent: every email that left (or was dropped), searchable by anything in it — recruiter, address, CC, company,
+// title, subject, the message you wrote, location and the JD. All words must match. Typing refreshes the list
+// in place; the query stays in the address bar, so Back from an opened email returns to the same results.
+const SENT_FIELDS = `lower(coalesce(j.title,'') || ' ' || coalesce(j.recruiter_name,'') || ' ' || coalesce(j.recruiter_email,'') || ' ' ||
+  coalesce(j.company,'') || ' ' || coalesce(j.location_jd,'') || ' ' || coalesce(j.location_listed,'') || ' ' || coalesce(j.ref_id,'') || ' ' ||
+  coalesce(a.to_email,'') || ' ' || coalesce(a.sent_cc, a.cc_emails, '') || ' ' || coalesce(a.subject,'') || ' ' || coalesce(a.body,'') || ' ' ||
+  coalesce(a.resume_path,'') || ' ' || coalesce(j.jd_text,''))`;
+const likeTerm = (t) => `%${t.replace(/[\\%_]/g, '\\$&')}%`;
+
+// "…words around the first hit…" with every typed word in bold. Body first (that is what you wrote), then the JD.
+function sentSnippet(r, terms) {
+  for (const [where, text] of [['', r.subject], ['', r.body], ['JD: ', r.jd_text], ['', r.company]]) {
+    const t = String(text ?? '').replace(/\*\*/g, '').replace(/\s+/g, ' ');
+    const low = t.toLowerCase();
+    const hit = terms.find(w => low.includes(w));
+    if (!hit) continue;
+    const at = low.indexOf(hit), from = Math.max(0, at - 50), to = Math.min(t.length, at + hit.length + 90);
+    const piece = t.slice(from, to);
+    const re = new RegExp(terms.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+    let out = '', last = 0;
+    for (const m of piece.matchAll(re)) { out += esc(piece.slice(last, m.index)) + `<b>${esc(m[0])}</b>`; last = m.index + m[0].length; }
+    return `${where}${from ? '…' : ''}${out}${esc(piece.slice(last))}${to < t.length ? '…' : ''}`;
+  }
+  return '';
+}
+
+export function sentPage({ q = '', rowsOnly = false } = {}) {
+  q = String(q).trim().slice(0, 200);
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+  const where = `a.status IN ('sent','failed','skipped','sending','expired')${terms.map(() => ` AND ${SENT_FIELDS} LIKE ? ESCAPE '\\'`).join('')}`;
+  // Body and JD only when searching (for the snippet); the plain list stays light.
   const rows = db.prepare(`SELECT a.id, a.to_email, a.resume_folder, a.match_score, a.locked, a.error, a.status, a.sent_at, a.updated_at,
-                                  j.title, j.recruiter_name
+                                  j.title, j.recruiter_name, j.company${terms.length ? ', a.subject, a.body, j.jd_text' : ''}
                            FROM applications a JOIN jobs j ON j.id = a.job_id
-                           WHERE a.status IN ('sent','failed','skipped','sending','expired') ORDER BY COALESCE(a.sent_at, a.updated_at) DESC LIMIT 2000`).all();
+                           WHERE ${where} ORDER BY COALESCE(a.sent_at, a.updated_at) DESC LIMIT 2000`).all(...terms.map(likeTerm));
+  const total = terms.length ? db.prepare(`SELECT COUNT(*) n FROM applications WHERE status IN ('sent','failed','skipped','sending','expired')`).get().n : rows.length;
   const cap = (x) => x ? x[0].toUpperCase() + x.slice(1) : '';
-  return `${hero('sent', 'Sent', 'Every email that went out, failed, expired or was skipped.')}
-<div class="filterbar"><input type="search" placeholder="Filter ${rows.length} emails" aria-label="Filter ${rows.length} emails" data-filter="#st > .row">
- <span class="sp"></span><a class="quiet" href="/history">Sent_History.md</a><a class="quiet" href="/export/applications.csv">Export CSV</a></div>
-<div class="grp long" id="st">${rows.map(r => `<a class="row tall" href="/app/${r.id}"><span class="lbl"><span>${esc(r.title ?? '')}</span>
-  <span class="sub one">${esc(r.recruiter_name ? `${r.recruiter_name} · ` : '')}${esc(r.to_email)} · ${esc(resumeLabel(r.resume_folder))} ${r.match_score ?? '?'}%${r.locked ? ' · locked' : ''}</span>${r.error ? `<span class="sub bad">${esc(r.error)}</span>` : ''}</span>
-  <span class="val end">${r.status === 'failed' ? `<span class="bad">${cap(r.status)}</span>` : cap(r.status)}<span class="sub">${esc(String(r.sent_at ?? r.updated_at ?? '').slice(0, 16))}</span></span><span class="chev"></span></a>`).join('') || '<div class="empty-row">Nothing has been sent yet.</div>'}</div>`;
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  const list = rows.map(r => { const snip = terms.length ? sentSnippet(r, terms) : '';
+    return `<a class="row tall" href="/app/${r.id}${qs}"><span class="lbl"><span>${esc(r.title ?? '')}</span>
+  <span class="sub one">${esc(r.recruiter_name ? `${r.recruiter_name} · ` : '')}${esc(r.to_email)}${r.company ? ` · ${esc(r.company)}` : ''} · ${esc(resumeLabel(r.resume_folder))} ${r.match_score ?? '?'}%${r.locked ? ' · locked' : ''}</span>${snip ? `<span class="sub clamp">${snip}</span>` : ''}${r.error ? `<span class="sub bad">${esc(r.error)}</span>` : ''}</span>
+  <span class="val end">${r.status === 'failed' ? `<span class="bad">${cap(r.status)}</span>` : cap(r.status)}<span class="sub">${esc(String(r.sent_at ?? r.updated_at ?? '').slice(0, 16))}</span></span><span class="chev"></span></a>`; }).join('')
+    || `<div class="empty-row">${terms.length ? `No email matches “${esc(q)}”.` : 'Nothing has been sent yet.'}</div>`;
+  const count = terms.length ? `${rows.length}${rows.length >= 2000 ? '+' : ''} of ${total}` : `${total}`;
+  if (rowsOnly) return JSON.stringify({ list, count });
+  return `${hero('sent', 'Sent', 'Every email that went out, failed, expired or was skipped. Search anything in it, then open one to see exactly what you sent.')}
+<div class="filterbar"><form method="get" action="/sent" style="margin:0" id="st-form"><input type="search" name="q" id="st-q" value="${esc(q)}" placeholder="Search recruiter, company, subject, message, JD…" aria-label="Search sent emails" autocomplete="off"><button type="submit" class="sr-only">Search</button></form>
+ <span class="meta" id="st-count">${count}</span><span class="sp"></span><a class="quiet" href="/history">Sent_History.md</a><a class="quiet" href="/export/applications.csv">Export CSV</a></div>
+<div class="grp long" id="st">${list}</div>
+<script>
+(() => {
+  const box = document.getElementById('st-q'), list = document.getElementById('st'), count = document.getElementById('st-count');
+  let timer = 0, ctl = null;
+  box.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = box.value.trim();
+      ctl?.abort(); ctl = new AbortController();
+      try {
+        const r = await fetch('/sent/rows?q=' + encodeURIComponent(q), { signal: ctl.signal });
+        const j = await r.json();
+        list.innerHTML = j.list; count.textContent = j.count;
+        history.replaceState(null, '', q ? '/sent?q=' + encodeURIComponent(q) : '/sent');
+      } catch (e) { if (e.name !== 'AbortError') count.textContent = 'Search failed'; }
+    }, 180);
+  });
+  if (box.value) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+})();
+</script>`;
 }
 
 // ── Vendors & locks ───────────────────────────────────────────────────────────
@@ -810,7 +983,7 @@ ${vendors.length > 6 ? `<div class="filterbar"><input type="search" placeholder=
 <div class="section">Resume locks <span class="aside">${locks.length}</span></div>
 <div class="grp">
  ${locks.map(l => `<div class="row"><span class="ico">${icon('lock')}</span><span class="lbl"><span>${esc(lockLabel(l))}</span><span class="sub one">${esc(resumeLabel(l.resume_folder))}${l.reason ? ` · ${esc(l.reason)}` : ''}</span></span><button type="button" class="small" onclick="simple('/api/locks/${l.id}/delete',{},this,'Remove this lock?')">Remove</button></div>`).join('')}
- <details class="disc" id="lock-fold"><summary class="row"><span class="lbl"><span style="color:var(--accent)">Add a lock…</span></span><span class="chev"></span></summary><div class="disc-body" id="lockform">
+ <details class="disc" id="lock-fold"><summary class="row"><span class="lbl"><span style="color:var(--accent-text)">Add a lock…</span></span><span class="chev"></span></summary><div class="disc-body" id="lockform">
   <div class="row"><label>Domain</label><input type="text" name="domain" placeholder="company.com"></div>
   <div class="row"><label>Recruiter</label><input type="text" name="local" placeholder="Optional, part before @"></div>
   <div class="row"><label>Resume</label><span style="flex:1"></span><span class="popup"><select name="resume_folder">${folders.map(f => `<option value="${esc(f.folder)}">${esc(f.name)}</option>`).join('')}</select></span></div>
@@ -928,19 +1101,20 @@ export function scrapedPage({ show = '', day = 'today', q = '' } = {}) {
   const open = (r) => !r.app_id ? '' : ['draft', 'held', 'failed'].includes(r.app_status) ? `<a href="/${r.source === 'manual' ? 'manual' : 'review'}?open=${r.app_id}">Open Draft</a>` : `<a href="/app/${r.app_id}">View Email</a>`;
   const actionScript = rows.some(r => r.status === 'low_match') ? `<script>
 async function applyAnyway(id, button) {
-  button.disabled = true; button.textContent = 'Drafting…';
+  button.disabled = true; setLabel(button, 'Drafting…');
   try {
     const result = await post('/api/apply-anyway/' + id);
     if (!result.ok) throw new Error(result.error || 'Could not draft this posting');
     // Stay on this page so you can add several; the row shows it's done, with a link to the draft.
     const done = document.createElement('a');
-    done.href = '/review?open=' + result.app_id; done.className = 'nw'; done.textContent = 'In Review (' + result.score + '%)';
+    done.href = '/review?open=' + result.app_id; done.className = 'swap'; done.textContent = 'In Review · ' + result.score + '%';
+    done.style.minWidth = button.offsetWidth + 'px';   // takes the button's place without moving the row
     button.replaceWith(done);
     const tr = done.closest('tr'); if (tr) tr.style.opacity = '.55';
     const tab = document.querySelector('.sb-item[href="/review"]');
     if (tab) { let b = tab.querySelector('b'); if (!b) { b = document.createElement('b'); b.textContent = '0'; tab.append(b) } b.textContent = Number(b.textContent) + 1 }
   } catch (error) {
-    button.disabled = false; button.textContent = 'Apply Anyway'; rvAlert(error.message);
+    button.disabled = false; setLabel(button, 'Apply Anyway'); rvAlert(error.message);
   }
 }</script>` : '';
   return `<div class="filterbar"><div class="seg">${chip(day === 'hour', url({ day: 'hour' }), 'Last Hour')}${chip(day === 'today', url({ day: 'today' }), 'Today')}${chip(day === 'all', url({ day: 'all' }), 'All Time')}</div>
@@ -951,7 +1125,7 @@ async function applyAnyway(id, button) {
  <div class="grp long">${rows.map(r => {
     const info = matchInfo(r);
     const missing = r.status !== 'low_match' || !info.missing.length ? '' : `<span class="sub one">Missing: ${info.missing.slice(0, 12).map(esc).join(', ')}${info.missing.length > 12 ? '…' : ''}</span>`;
-    const action = `${open(r)}${r.status === 'low_match' ? ` <button type="button" class="small" onclick="applyAnyway(${r.id},this)" title="Draft it with your best resume, whatever the match. It still waits in Review for your approval.">Apply Anyway</button>` : ''}`;
+    const action = `${open(r)}${r.status === 'low_match' ? ` <button type="button" class="small" onclick="applyAnyway(${r.id},this)" title="Draft it with your best resume, whatever the match. It still waits in Review for your approval.">${twoLabel('Apply Anyway', 'Drafting…')}</button>` : ''}`;
     return `<div class="row tall"><span class="lbl wrap"><span>${jobTitle(r)}</span>
      <span class="sub one">#${r.id} · ${esc((r.posted_raw || '').replace(/\s+/g, ' ').trim())}${r.company ? ' · ' + esc(r.company) : ''}${(r.location_jd || r.location_listed) ? ' · ' + esc(r.location_jd || r.location_listed) : ''}${r.recruiter_email ? ' · ' + esc(r.recruiter_email) : ''}</span>
      <span class="sub clamp">${esc(r.status.replace(/_/g, ' '))}${r.status_reason ? ` · ${esc(r.status_reason)}` : ''}</span>${missing}</span>
@@ -978,7 +1152,7 @@ export function healthPage() {
 <div class="section">Sending</div>
 <div class="grp">
  ${check(emailConfigured(), 'Gmail', emailConfigured() ? `${esc(config.gmailUser)} <span id="vmsg"></span>` : 'GMAIL_USER / GMAIL_APP_PASSWORD missing in .env', emailConfigured() ? '<button type="button" class="small" onclick="verify(this)">Test Login</button>' : '')}
- ${check(!c.q.paused, 'Sending', c.q.paused ? 'Paused' : 'On', `<label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="simple('/api/pause-sending',{on:!this.checked},this)" aria-label="Sending"><span></span></label>`)}
+ ${check(!c.q.paused, 'Sending', c.q.paused ? 'Paused' : 'On', `<label class="switch"><input type="checkbox" ${c.q.paused ? '' : 'checked'} onchange="flip(this,'/api/pause-sending',{on:!this.checked})" aria-label="Sending"><span></span></label>`)}
  ${check(c.q.dryRun ? null : true, 'Dry run', c.q.dryRun ? 'On, so nothing is really sent (DRY_RUN=true in .env)' : 'Off, so emails really go out')}
  ${check(stuck ? false : true, 'Stuck sends', stuck ? `${stuck} email(s) stuck in “sending”` : 'None')}
  ${check(true, 'Daily cap', `${c.q.dailyCapSentToday} of ${c.q.cap} today · ${c.q.sentToday} sent in total · next days ${ramp}`)}
@@ -988,7 +1162,7 @@ export function healthPage() {
 <p class="foot"><span id="cc-msg">Comma-separated. Overrides CC_EMAILS in .env.</span></p>
 <div class="section">Watcher and data</div>
 <div class="grp">
- ${check(watcherPaused ? null : pollAgeMin !== null && pollAgeMin < 10 && getState('last_poll_ok', '1') === '1', 'nvoids watcher', watcherPaused ? 'Paused' : lastPoll ? `Last check ${esc(lastPoll)} (${pollAgeMin} min ago)${getState('last_poll_ok', '1') === '1' ? '' : ', failed'}` : 'Never checked', `<label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="simple('/api/pause-watcher',{on:!this.checked},this)" aria-label="Watcher"><span></span></label>`)}
+ ${check(watcherPaused ? null : pollAgeMin !== null && pollAgeMin < 10 && getState('last_poll_ok', '1') === '1', 'nvoids watcher', watcherPaused ? 'Paused' : lastPoll ? `Last check ${esc(lastPoll)} (${pollAgeMin} min ago)${getState('last_poll_ok', '1') === '1' ? '' : ', failed'}` : 'Never checked', `<label class="switch"><input type="checkbox" ${watcherPaused ? '' : 'checked'} onchange="flip(this,'/api/pause-watcher',{on:!this.checked})" aria-label="Watcher"><span></span></label>`)}
  ${(() => { const b = breakerState(); return check(b.until > Date.now() ? false : b.failures ? null : true, 'Circuit breaker', b.until > Date.now() ? `Open after ${b.failures} failed checks; retrying at ${new Date(b.until).toLocaleTimeString()}` : b.failures ? `${b.failures} failed check(s) in a row` : 'Closed, nvoids is reachable') })()}
  ${check(true, 'nvoids layout', getState('nvoids_layout', '') === 'old' ? 'Old site (job_details.jsp), handled' : getState('nvoids_layout', '') ? 'New site (j_details.jsp)' : 'Not checked yet')}
  ${check(true, 'Rescue missed postings', `Read back the listing after the Mac slept. <span id="rmsg"></span>`, `<input id="rh" type="number" min="1" max="48" value="6" style="flex:none;width:44px" aria-label="Hours"><span class="meta">hours</span><button type="button" class="small" onclick="doRescue(this)">Rescue</button>`)}

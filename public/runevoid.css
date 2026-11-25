@@ -39,9 +39,9 @@
   --ink-3: #8a8170;         /* placeholders, disabled, 3.0:1 */
   --rule: #bdb69c;          /* separators inside a group */
   --shade: var(--ink);      /* hard shadows are always the outline colour */
-  --accent: #cf5722;        /* the car's muddy orange */
+  --accent: #d35c26;        /* the car's muddy orange, lifted just enough for ink text on it */
   --accent-hover: #db6835;
-  --on-accent: #1c1418;     /* 4.3:1 on the accent */
+  --on-accent: #1c1418;     /* 4.6:1 on the accent */
   --accent-text: #a3431a;   /* orange text on paper, 4.9:1 */
   --tint: #eccdb0;
   --bad: #a8261b;
@@ -469,7 +469,7 @@ details.disc > .disc-body { padding: 2px 0 12px; }
 input, select, textarea, button { font: inherit; color: var(--ink); }
 
 /* Push buttons: a key that sinks by its shadow when pressed. */
-button {
+button, a.btnlink {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -488,13 +488,13 @@ button {
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
-button:hover { background: var(--paper-2); }
-button:active:not(:disabled) { transform: translate(var(--lift), var(--lift)); box-shadow: none; }
-button:focus-visible { box-shadow: var(--lift) var(--lift) 0 var(--shade), var(--focus); }
+button:hover, a.btnlink:hover { background: var(--paper-2); }
+button:active:not(:disabled), a.btnlink:active { transform: translate(var(--lift), var(--lift)); box-shadow: none; }
+button:focus-visible, a.btnlink:focus-visible { box-shadow: var(--lift) var(--lift) 0 var(--shade), var(--focus); }
 button:active:focus-visible:not(:disabled) { box-shadow: var(--focus); }
 button.primary { background: var(--accent); color: var(--on-accent); }
 button.primary:hover { background: var(--accent-hover); }
-button.small { --lift: 2px; height: 24px; padding: 0 9px; font-size: 11px; }
+button.small, a.btnlink.small { --lift: 2px; height: 24px; padding: 0 9px; font-size: 11px; }
 button.plain { height: auto; margin: 0; padding: 0 2px; border: 0; background: none; box-shadow: none; color: var(--accent-text); }
 button.plain:hover { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
 button.plain:active { transform: none; }
@@ -507,8 +507,8 @@ button.scan svg.i { margin-left: -2px; }
 /* Keys that sink when pressed: the press moves the key by its shadow offset, and browsers hit-test the moved box.
    A press within --lift of the top or left edge would then release outside the key and the click would be lost.
    While pressed, an invisible ::before also covers the key's resting position, so the release still lands on it. */
-button, .sb-profile, .chips a { position: relative; }
-:is(button, .sb-profile, .chips a):active::before {
+button, a.btnlink, .sb-profile, .chips a { position: relative; }
+:is(button, a.btnlink, .sb-profile, .chips a):active::before {
   content: "";
   position: absolute;
   inset: calc(-2px - var(--lift)) -2px -2px calc(-2px - var(--lift));   /* border box, extended up and left by the lift */
@@ -675,16 +675,25 @@ pre { margin: 0; padding: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere
 .dlg-buttons { display: flex; flex-direction: row-reverse; gap: 12px; padding: 0 22px 22px; }
 .dlg-buttons button { min-width: 84px; }
 
-/* Switch: rectangular slot, square knob */
-.switch { position: relative; flex: none; width: 42px; height: 24px; }
+/* Switch: rectangular slot, square knob.
+   Every size derives from these vars so the knob stays centred: inside the 2px border the slot is
+   (w - 2b) x (h - 2b); the knob is that height minus a gap on each side, and slides the leftover width.
+   Keep h, b and gap even so the centre lands on a whole pixel. */
+.switch {
+  --w: 42px; --h: 24px; --b: 2px; --gap: 2px;
+  --k: calc(var(--h) - 2 * var(--b) - 2 * var(--gap));
+  position: relative; flex: none; width: var(--w); height: var(--h);
+}
 .switch input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.switch span { position: absolute; inset: 0; border: 2px solid var(--ink); border-radius: 6px; background: var(--paper-2); }
+.switch span { position: absolute; inset: 0; border: var(--b) solid var(--ink); border-radius: 6px; background: var(--paper-2);
+  transition: background-color 160ms ease-out; }
 .switch span::after {
-  content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px;
+  content: ""; position: absolute; left: var(--gap); top: var(--gap); width: var(--k); height: var(--k);
   border-radius: 3px; background: var(--ink);
+  transition: transform 160ms cubic-bezier(.3, .7, .4, 1);   /* quick start, soft landing */
 }
 .switch input:checked + span { background: var(--accent); }
-.switch input:checked + span::after { transform: translateX(18px); }
+.switch input:checked + span::after { transform: translateX(calc(var(--w) - 2 * var(--b) - 2 * var(--gap) - var(--k))); }
 .switch input:focus-visible + span { box-shadow: var(--focus); }
 .switch input:disabled + span { opacity: .5; }
 
@@ -884,10 +893,11 @@ kbd {
   border: 2px solid var(--ink); border-radius: 50%; background: var(--accent);
 }
 .draft-actions {
-  flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 20px 12px 24px;
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 20px 12px 24px;
   border-top: 2px solid var(--ink); background: var(--paper);
 }
 .draft-actions .sp { flex: 1; }
+.draft-actions .primary { margin-left: auto; }   /* the default action keeps the right edge, even on a wrapped line */
 .draft-actions .msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12px/16px var(--font); color: var(--ink-2); }
 .kw { font: 500 12px/26px var(--font); color: var(--ink-2); }
 .kw i { font-style: normal; }
@@ -985,3 +995,24 @@ td a:hover { color: var(--accent-text); }
 .row input.vt-date { flex: none; width: 112px; }
 .row input.vt-note { flex: none; width: 160px; }
 .meta.audit { padding: 3px 0; }
+
+/* Two-label buttons (twoLabel in src/ui.js): both labels share one grid cell, the inactive one invisible, so the
+   button is sized by the longer label and doesn't change width mid-action. */
+.bl { display: inline-grid; justify-items: center; }
+.bl > span, .bl::after { grid-area: 1 / 1; }
+.bl::after { content: attr(data-alt); visibility: hidden; }
+a.swap { display: inline-block; text-align: center; }
+
+/* Sent → open email: links that look like the small buttons, and the attached resume read in place. */
+a.btnlink { text-decoration: none; }
+a.btnlink:hover { text-decoration: none; }
+a.btnlink + a.btnlink { margin-left: 6px; }
+.row .sub b { color: var(--ink); font-weight: 700; }
+.resume-doc { padding: 20px 24px; font: 400 13px/1.55 var(--font); color: var(--ink); overflow-wrap: anywhere; }
+.resume-doc h1, .resume-doc h2, .resume-doc h3 { margin: 14px 0 6px; font-weight: 700; line-height: 1.25; }
+.resume-doc h1 { font-size: 18px; } .resume-doc h2 { font-size: 15px; } .resume-doc h3 { font-size: 13px; }
+.resume-doc p { margin: 0 0 6px; }
+.resume-doc ul, .resume-doc ol { margin: 0 0 8px; padding-left: 20px; }
+.resume-doc table { border-collapse: collapse; margin: 6px 0; }
+.resume-doc td, .resume-doc th { padding: 2px 8px 2px 0; vertical-align: top; }
+.resume-doc img { max-width: 100%; height: auto; }

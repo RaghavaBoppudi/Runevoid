@@ -6,10 +6,11 @@
 // within PRIORITY_WINDOW_MINUTES of its nvoids posting time is "priority": it goes first and only waits
 // PRIORITY_PACE_MIN..MAX (10–20 s), because a fresh C2C posting is worth answering fast. There is no wait
 // after a held or failed email, and none before the first send after idle.
+import { existsSync } from 'node:fs';
 import { config, dailyCap } from './config.js';
 import { db, now, logEvent, audit, getState, setState, setJobStatus, getApp, updateApp } from './db.js';
 import { resolveForSend, sentTodayCount, dailyCapSentTodayCount } from './rules.js';
-import { buildDraft, deliver, appendHistory, assertNoJobDetails } from './email.js';
+import { buildDraft, deliver, appendHistory, assertNoJobDetails, snapshotResume } from './email.js';
 
 const rand = (min, max) => Math.round((min + Math.random() * Math.max(0, max - min)) * 1000);
 
@@ -133,9 +134,11 @@ async function sendNext() {
 
   updateApp(a.id, { status: 'sending' });
   try {
-    const messageId = await deliver({ to: a.to_email, subject: a.subject, body: a.body, resumePath: a.resume_path, cc: a.cc_emails === null ? undefined : a.cc_emails.split(',').filter(Boolean) });
+    // Attach the saved copy, so what the Sent view opens later is byte-for-byte what the recruiter got.
+    const sentResume = existsSync(a.resume_path) ? snapshotResume(a.resume_path) : a.resume_path;
+    const { messageId, cc } = await deliver({ to: a.to_email, subject: a.subject, body: a.body, resumePath: sentResume, cc: a.cc_emails === null ? undefined : a.cc_emails.split(',').filter(Boolean) });
     const t = now();
-    updateApp(a.id, { status: 'sent', sent_at: t, message_id: messageId, error: null, hold_kind: null, hold_reason: null });
+    updateApp(a.id, { status: 'sent', sent_at: t, message_id: messageId, sent_cc: cc.join(','), sent_resume: sentResume, error: null, hold_kind: null, hold_reason: null });
     setJobStatus(a.job_id, 'sent', `resume folder ${a.resume_folder}`);
     logEvent('info', 'sent', a.job_id, `Sent to ${a.to_email} with resume folder ${a.resume_folder}${next.priority ? ' (priority)' : ''}`, { messageId });
     try { appendHistory(getApp(a.id), job); }
